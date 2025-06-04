@@ -1,0 +1,173 @@
+
+Starting "C:\Program Files\Autodesk\Maya2024\bin\mayabatch.exe"
+pymel.core : INFO : Updating pymel with pre-loaded plugins: modelingToolkit, shaderFXPlugin
+
+Project settings file loaded: C:\Users\Adam Fischer\projectSettings.json
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+                    Project set to: C:/Perforce/Potter/Art/3D
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Warning: Y-axis is already the Up-axis
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+                    Initial Maya parameters have been set!.
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+                    Units have been set!
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Warning: |||||>>>>>----- P4GT-Maya-2022_x64 plugin failed to load! -----<<<<<|||||
+|||||>>>>>----- AnimSchoolPicker plugin has been loaded -----<<<<<|||||
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+                    Animation PlaybackSpeed set to 1.
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Warning: line 1: displayRGBColor is unavailable in batch mode
+Turtle Renderer 2024.0.0
+Running Turtle startup script
++++++++ Turtle for Maya registered successfully ++++++
+00:00:00   539MB         | log started Tue Jun  3 20:46:06 2025
+00:00:00   539MB         | Arnold 7.2.5.1 [fd213eeb] windows x86_64 clang-15.0.7 oiio-2.4.1 osl-1.13.0 vdb-7.1.1 adlsdk-7.4.2.47 clmhub-3.1.1.43 rlm-14.2.5 optix-8.0.0 2024/01/12 02:53:40
+00:00:00   539MB         | running on MSI, pid=32192
+00:00:00   539MB         |  1 x 11th Gen Intel(R) Core(TM) i9-11900H @ 2.50GHz (8 cores, 16 logical) with 32469MB
+00:00:00   539MB         |  NVIDIA driver version 576.02
+00:00:00   539MB         |  GPU 0: NVIDIA GeForce RTX 3060 Laptop GPU @ 1282MHz (compute 8.6) with 6143MB (5448MB available) (NVLink:0)
+00:00:00   539MB         |  Windows 10 (version 10.0, build 19045)
+00:00:00   539MB         |  soft limit for open files changed from 512 to 2048
+00:00:00   539MB         |  
+00:00:00   539MB         | Installing system handler with mask 255
+00:00:01   740MB         | [metadata] loading metadata file: C:\Program Files\Autodesk\Arnold\maya2024\bin\arnold.mtd
+00:00:01   740MB WARNING | [metadata] (C:\Program Files\Autodesk\Arnold\maya2024\bin\arnold.mtd:1299) Node entry does not exist
+00:00:01   740MB WARNING | [metadata] (C:\Program Files\Autodesk\Arnold\maya2024\bin\arnold.mtd:1306) Found attribute outside a node
+00:00:01   740MB WARNING | [metadata] (C:\Program Files\Autodesk\Arnold\maya2024\bin\arnold.mtd:1309) Found attribute outside a node
+00:00:01   740MB WARNING | [metadata] (C:\Program Files\Autodesk\Arnold\maya2024\bin\arnold.mtd:1313) Found attribute outside a node
+00:00:01   742MB         | [color_manager_ocio] default ocio.config found in C:\Program Files\Autodesk\Arnold\maya2024\bin\../ocio/configs/arnold/config.ocio
+00:00:01   742MB         | loading plugins from C:/Program Files/Autodesk/Arnold/maya2024/shaders ...
+00:00:01   742MB         |  hairPhysicalShader_shaders.dll: HairPhysicalShaderDiffuseColorAdapter uses Arnold 7.2.5.1
+00:00:01   742MB         |  hairPhysicalShader_shaders.dll: HairPhysicalShaderSpecularWeightAdapter uses Arnold 7.2.5.1
+00:00:01   742MB         |  hairPhysicalShader_shaders.dll: HairPhysicalShaderSpecularGlossAdapter uses Arnold 7.2.5.1
+00:00:01   742MB         |  hairPhysicalShader_shaders.dll: HairPhysicalShaderTransmissionWeightAdapter uses Arnold 7.2.5.1
+00:00:01   742MB         |  hairPhysicalShader_shaders.dll: HairPhysicalShaderTransmissionSpreadAdapter uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatConstant uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatComposite uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatCondition uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatCorrect uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatLogic uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatMask uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkFloatMath uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorComposite uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorCondition uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorConstant uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorCorrect uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorLogic uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorMask uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkColorMath uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkChannels uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkPremultiply uses Arnold 7.2.5.1
+00:00:01   742MB         |  lookdevkit_shaders.dll: ldkSimplexNoise uses Arnold 7.2.5.1
+00:00:01   742MB         |  mtoa_shaders.dll: MayaBulge uses Arnold 7.2.5.1
+00:00:01   742MB         |  mtoa_shaders.dll: MayaCloth uses Arnold 7.2.5.1
+00:00:01   742MB         |  mtoa_shaders.dll: MayaGrid uses Arnold 7.2.5.1
+00:00:01   742MB         |  mtoa_shaders.dll: MayaFractal uses Arnold 7.2.5.1
+00:00:01   742MB         |  mtoa_shaders.dll: MayaNoise uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaCloud uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaCloudAlpha uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaSnow uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaSolidFractal uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaVolumeNoise uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaBrownian uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaStucco uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MtoaWriteColor uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MtoaWriteFloat uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaEnvSphere uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaFluid uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaMarble uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaMountain uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaWater uses Arnold 7.2.5.1
+00:00:01   743MB         |  mtoa_shaders.dll: MayaCrater uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_shaders.dll: MayaLeather uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_shaders.dll: MayaGranite uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_shaders.dll: MayaRock uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_shaders.dll: MayaFluidData uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_shaders.dll: MayaFluidTexture2D uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyAbsFloatOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyAbs2FloatsOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyAbs3FloatsOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyAbsIntOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyRelFloatOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyRel2FloatsOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyRel3FloatsOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  renderSetup_shaders.dll: applyRelIntOverride uses Arnold 7.2.5.1
+00:00:01   744MB         |  xgenSpline_shaders.dll: XGenHairMapping uses Arnold 7.2.5.1
+00:00:01   744MB         | loading plugins from C:/Program Files/Autodesk/Arnold/maya2024/procedurals ...
+00:00:01   744MB         |  mtoa_ParticleVolume_proc.dll: volume_particle uses Arnold 7.2.5.1
+00:00:01   744MB         |  mtoa_ParticleVolume_proc.dll: implicit_particle uses Arnold 7.2.5.1
+00:00:01   745MB         |  xgenSpline_procedural.dll: xgenProcedural uses Arnold 7.2.5.1
+00:00:01   745MB         |  xgen_procedural.dll: xgen_procedural uses Arnold 7.2.5.1
+00:00:01   745MB         | loaded 60 plugins from 8 lib(s) in 0:00.04
+00:00:01   745MB         | loading plugins from C:\Program Files\Autodesk\Arnold\maya2024\bin\..\plugins ...
+00:00:01   745MB         |  alembic_proc.dll: alembic uses Arnold 7.2.5.1
+00:00:01   746MB         |  cryptomatte.dll: cryptomatte uses Arnold 7.2.5.1
+00:00:01   746MB         |  cryptomatte.dll: cryptomatte_filter uses Arnold 7.2.5.1
+00:00:01   746MB         |  cryptomatte.dll: cryptomatte_manifest_driver uses Arnold 7.2.5.1
+00:00:01   746MB         |  [metadata] loading metadata file: C:\Program Files\Autodesk\Arnold\maya2024\bin\..\plugins\cryptomatte.mtd
+00:00:01   771MB         |  usd_proc.dll: usd uses Arnold 7.2.5.1
+00:00:01   771MB         | loaded 5 plugins from 3 lib(s) in 0:00.09
+Error: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 18: RuntimeError: file <maya console> line 1: Plug-in, "vrayformaya", was not found on MAYA_PLUG_IN_PATH.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 6472: Unrecognized node type 'mentalrayItemsList'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 6474: Unrecognized node type 'mentalrayGlobals'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 6476: Unrecognized node type 'mentalrayOptions'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 6628: Unrecognized node type 'mentalrayFramebuffer'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 9415: Unrecognized node type 'mentalrayOptions'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 9417: Unrecognized node type 'mentalrayOptions'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 9569: Unrecognized node type 'VRaySettingsNode'; preserving node information during this session.
+Initialized VP2.0 renderer {
+  Version : 2016.11.62.12. Feature Level 4.
+  Adapter : NVIDIA GeForce RTX 3060 Laptop GPU/PCIe/SSE2
+  Vendor ID: 4318. Device ID : 39520
+  Driver : .
+  API : OpenGL V.4.6.
+  Max texture size : 32768 * 32768.
+  Max texture coords : 8
+  Shader versions supported (Vertex: 4, Geometry: 4, Pixel 4).
+  Shader compiler profile : (Best card profile)
+  Active stereo support available : 0
+  GPU Memory Limit : 6144 MB.
+  CPU Memory Limit : 30845.9 MB.
+}
+OpenCL evaluator is attempting to initialize OpenCL.
+Detected 2 OpenCL Platforms: 
+ 0: NVIDIA Corporation. NVIDIA CUDA. OpenCL 3.0 CUDA 12.9.40.
+ Supported extensions: cl_khr_global_int32_base_atomics cl_khr_global_int32_extended_atomics cl_khr_local_int32_base_atomics cl_khr_local_int32_extended_atomics cl_khr_fp64 cl_khr_3d_image_writes cl_khr_byte_addressable_store cl_khr_icd cl_khr_gl_sharing cl_nv_compiler_options cl_nv_device_attribute_query cl_nv_pragma_unroll cl_nv_d3d10_sharing cl_khr_d3d10_sharing cl_nv_d3d11_sharing cl_nv_copy_opts cl_nv_create_buffer cl_khr_int64_base_atomics cl_khr_int64_extended_atomics cl_khr_device_uuid cl_khr_pci_bus_info cl_khr_external_semaphore cl_khr_external_memory cl_khr_external_semaphore_win32 cl_khr_external_memory_win32 cl_khr_semaphore 
+ Selected matching OpenCL Platform: NVIDIA Corporation NVIDIA CUDA OpenCL 3.0 CUDA 12.9.40.
+ 1: Intel(R) Corporation. Intel(R) OpenCL HD Graphics. OpenCL 3.0 .
+ Supported extensions: cl_khr_byte_addressable_store cl_khr_fp16 cl_khr_global_int32_base_atomics cl_khr_global_int32_extended_atomics cl_khr_icd cl_khr_local_int32_base_atomics cl_khr_local_int32_extended_atomics cl_intel_command_queue_families cl_intel_subgroups cl_intel_required_subgroup_size cl_intel_subgroups_short cl_khr_spir cl_intel_accelerator cl_intel_driver_diagnostics cl_khr_priority_hints cl_khr_throttle_hints cl_khr_create_command_queue cl_intel_subgroups_char cl_intel_subgroups_long cl_khr_il_program cl_intel_mem_force_host_memory cl_khr_subgroup_extended_types cl_khr_subgroup_non_uniform_vote cl_khr_subgroup_ballot cl_khr_subgroup_non_uniform_arithmetic cl_khr_subgroup_shuffle cl_khr_subgroup_shuffle_relative cl_khr_subgroup_clustered_reduce cl_intel_device_attribute_query cl_khr_suggested_local_work_size cl_intel_spirv_media_block_io cl_intel_spirv_subgroups cl_khr_spirv_no_integer_wrap_decoration cl_intel_unified_shared_memory_preview cl_khr_mipmap_image cl_khr_mipmap_image_writes cl_intel_planar_yuv cl_intel_packed_yuv cl_khr_int64_base_atomics cl_khr_int64_extended_atomics cl_khr_image2d_from_buffer cl_khr_depth_images cl_khr_3d_image_writes cl_intel_media_block_io cl_khr_gl_sharing cl_khr_gl_depth_images cl_khr_gl_event cl_khr_gl_msaa_sharing cl_intel_dx9_media_sharing cl_khr_dx9_media_sharing cl_khr_d3d10_sharing cl_khr_d3d11_sharing cl_intel_d3d11_nv12_media_sharing cl_intel_sharing_format_query cl_khr_pci_bus_info cl_intel_subgroup_local_block_io cl_intel_simultaneous_sharing  
+OpenCL evaluator choosing OpenCL platform NVIDIA Corporation.
+OpenCL evaluator is unable to find a GPU device that can share VBOs with OpenGL.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 9706: Unrecognized node type 'nodeGraphEditorInfo'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 9718: Unrecognized node type 'nodeGraphEditorInfo'; preserving node information during this session.
+Warning: file: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma line 10251: Selected nodes were ignored since the 'scene' flag was used.
+Warning: file: C:/Perforce/Potter/Art/3D/Lights/ForTexturing/characterLights_template.ma line 426: Scene-Metadata is not supported for referenced files.
+Warning: line 1: Errors have occurred while reading this scene that may result in data loss.
+Read 2 files in  5.7 seconds.
+Result: C:/Users/ADAMFI~1/AppData/Local/Temp/temp_render_scene.ma
+Warning: file: C:/Program Files/Autodesk/Maya2024/scripts/others/makeCameraRenderable.mel line 45: Found camera EagleCamera1Shape.
+ogsRender  -layer defaultRenderLayer  ;
+Rendering frame 1 : C:/Perforce/Potter/Art/Libraries/Effects/Rig/dustMotes/rig/fx_dustWhisp_rig.1.png
+Total Time For Render (hh:mm:ss): 00:00:00
+Maximum Frame Heap Size:        491.93 Mb
+Maximum Resident Size:          1014.61 Mb
+Result: C:/Perforce/Potter/Art/Libraries/Effects/Rig/dustMotes/rig/fx_dustWhisp_rig.1.png
+Scene C:\Users\ADAMFI~1\AppData\Local\Temp\temp_render_scene.ma completed.
