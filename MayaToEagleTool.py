@@ -34,6 +34,7 @@ import tempfile
 import traceback
 import shutil
 import json
+import stat
 import maya.standalone
 maya.standalone.initialize(name="python")
 import maya.utils
@@ -71,7 +72,7 @@ effectsTags = [
 allTags = [
     "beard", "glass", "earing", "necklace", "bracelet", "glove", "shoe", "cape", "coat",
     "jacket", "sock", "hat", "sandal", "belt", "shirt", "pauldron", "helmet", "ponytail",
-    "mask", "hood", "tie", "bow", "boot", "male", "female", "skirt", "pants", "shorts",
+    "hood", "tie", "bow", "boot", "male", "female", "skirt", "pants", "shorts",
     "tight", "scarf", "leather", "metal", "animate", "y8", "by7", "bh", "top", "bottom",
     "glove", "full", "hat", "wrist", "scarf", "glass", "earring", "ring", "fade", "fur"
 ]
@@ -248,16 +249,21 @@ try:
 
     flat_axis = None
     if is_effects_file:
-        flat_threshold = 0.05
-        if bbox_depth < flat_threshold:
-            flat_axis = 'Z'  # Facing front
-            print(f"Flat axis detected: {{flat_axis}}")
-        elif bbox_width < flat_threshold:
-            flat_axis = 'X'  # Facing side
-            print(f"Flat axis detected: {{flat_axis}}")
-        elif bbox_height < flat_threshold:
-            flat_axis = 'Y'  # Top-down
-            print(f"Flat axis detected: {{flat_axis}}")
+        x = bbox_width
+        y = bbox_height
+        z = bbox_depth
+
+        flat_candidates = []
+        if x < 0.05 * y or x < 0.05 * z:
+            flat_candidates.append(('X', x))
+        if y < 0.05 * x or y < 0.05 * z:
+            flat_candidates.append(('Y', y))
+        if z < 0.05 * x or z < 0.05 * y:
+            flat_candidates.append(('Z', z))
+
+        if flat_candidates:
+            flat_axis = min(flat_candidates, key=lambda t: t[1])[0]
+            print("Flat axis detected by ratio:", flat_axis)
 
     # === COMPUTE OVERALL BOUNDING BOX OF ALL 3 MESHES ===
 
@@ -267,12 +273,6 @@ try:
     overall_bb_width  = (ov_x_max - ov_x_min) * margin
     overall_bb_height = (ov_y_max - ov_y_min) * margin
     overall_bb_depth  = (ov_z_max - ov_z_min) * margin
-
-    # Clamp the bounding box height to avoid division by near-zero
-    #min_bb_height = 0.01
-    #if overall_bb_height < min_bb_height:
-    #    print(f"Warning: Flat object detected. Injecting minimum height of {{min_bb_height}}.")
-    #    overall_bb_height = min_bb_height
 
     # === COMPUTE ASPECT RATIO BASED ON BOUNDING BOX SHAPE, COMPUTE PIXEL HEIGHT ===
 
@@ -298,35 +298,37 @@ try:
 
     if is_effects_file and flat_axis:
         print("[Camera] Auto-orienting camera for flat effects plane...")
+        center_x = (ov_x_min + ov_x_max) / 2.0
+        center_y = (ov_y_min + ov_y_max) / 2.0
+        center_z = (ov_z_min + ov_z_max) / 2.0
 
         if flat_axis == 'Z':
-            # Camera looking down +Z
-            cam_pos = [(ov_x_min + ov_x_max) / 2.0,(ov_y_min + ov_y_max) / 2.0,ov_z_max + 100]
+            # Camera looking at front face from +Z
+            cam_pos = [center_x, center_y, ov_z_max + 100]
             cam_rot = [0, 0, 0]
             ortho_width = max(overall_bb_width, overall_bb_height) * 1.05
             dynamic_aspect = overall_bb_width / overall_bb_height
 
         elif flat_axis == 'X':
-            # Camera looking down +X
-            cam_pos = [ov_x_max + 100,(ov_y_min + ov_y_max) / 2.0,(ov_z_min + ov_z_max) / 2.0]
-            cam_rot = [0, -90, 0]
+            # Camera looking at side face from +X
+            cam_pos = [ov_x_max + 100, center_y, center_z]
+            cam_rot = [0, 90, 0]
             ortho_width = max(overall_bb_depth, overall_bb_height) * 1.05
             dynamic_aspect = overall_bb_depth / overall_bb_height
 
         elif flat_axis == 'Y':
-            # Camera looking down +Y
-            cam_pos = [(ov_x_min + ov_x_max) / 2.0,ov_y_max + 100,(ov_z_min + ov_z_max) / 2.0]
+            # Camera looking from above (top-down)
+            cam_pos = [center_x, ov_y_max + 100, center_z]
             cam_rot = [-90, 0, 0]
             ortho_width = max(overall_bb_width, overall_bb_depth) * 1.05
             dynamic_aspect = overall_bb_width / overall_bb_depth
 
+        pixel_height = int(1920 / dynamic_aspect)
         cmds.xform(camera, ws=True, t=cam_pos)
         cmds.setAttr(f"{{camera}}.rotateX", cam_rot[0])
         cmds.setAttr(f"{{camera}}.rotateY", cam_rot[1])
         cmds.setAttr(f"{{camera}}.rotateZ", cam_rot[2])
         cmds.setAttr(f"{{cameraShape}}.orthographicWidth", ortho_width)
-
-        pixel_height = int(1920 / dynamic_aspect)
         print(f"[Camera] Camera positioned at {{cam_pos}} with rotation {{cam_rot}}")
         print(f"[Camera] Ortho width: {{ortho_width}}, aspect: {{dynamic_aspect}}, height: {{pixel_height}}")
 
@@ -432,6 +434,7 @@ try:
     # === CREATE TAGS FROM SHADER TEXTURE MESH DATA ===
 
     keywords = []
+    rigUsed = ""
     if not shader_texture_data:
         tagslist = []
     else:
@@ -450,11 +453,12 @@ try:
         # Remove 'male' if 'female' is present
         if 'female' in [t.lower() for t in tagslist]:
             tagslist = [tag for tag in tagslist if tag.lower() != 'male']
+        # Remove mask from the tagslist
+            tagslist = [tag for tag in tagslist if tag.lower() != "mask"]
         # Add outfit and hair specific tags
         tagslist.extend([tag.lower() for tag in tagged_outfit_parts])
         
         # Save character and creature rig name for notes to be added later
-        rigUsed = ""
         if is_character_file or is_creature_file:
             if grp_geo_name:
                 ref_node = cmds.referenceQuery(grp_geo_name, referenceNode=True)
@@ -629,7 +633,7 @@ try:
     # === WRITE JSON FILE ===
 
     #library_root = os.path.dirname(output_dir)
-    base_library = os.path.join(os.path.splitdrive(output_dir)[0] + os.sep, "Perforce", "Potter", "Art", "Libraries")
+    base_library = os.path.join(os.path.splitdrive(output_dir)[0] + os.sep, "Perforce", "Potter", "Art", "EagleFiles")
     library_root = os.path.join(base_library, file_type.capitalize())
     json_filename = f"render_data_{{file_type.lower()}}.json"
     json_file = os.path.join(library_root, json_filename)
@@ -835,7 +839,7 @@ class MayaRenderGUI(QWidget):
         base_effects_relative = os.path.join(os.sep, "perforce", "potter", "art", "3d", "effects")
 
         # Build the base library folder
-        base_library = os.path.join(drive + os.sep, "Perforce", "Potter", "Art", "Libraries")
+        base_library = os.path.join(drive + os.sep, "Perforce", "Potter", "Art", "EagleFiles")
         output_dir = None
 
         def subpath_after(base_path):
@@ -917,7 +921,7 @@ class MayaRenderGUI(QWidget):
                         self.scene_files.append((full_path, out_dir))
 
         if not self.scene_files:
-            self.log_output.append("Error: No matching .ma files found in the selected folder (recursively).")
+            self.log_output.append("Error: The .ma files must be in one of the renderable folders (Props, Outfits, Hair, Characters, Creatures, Effects)")
             return
 
         self.current_index = 0
@@ -1059,7 +1063,7 @@ class MayaRenderGUI(QWidget):
             self.log_output.append("Error: Could not determine drive letter from scene folder.")
             return
 
-        base_library = os.path.join(drive + os.sep, "Perforce", "Potter", "Art", "Libraries")
+        base_library = os.path.join(drive + os.sep, "Perforce", "Potter", "Art", "EagleFiles")
         upload_script = os.path.join(self.get_base_path(), "UploadToEagle.py")
 
         for category in selected_types:
