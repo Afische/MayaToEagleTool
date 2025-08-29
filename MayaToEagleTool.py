@@ -11,6 +11,7 @@ from PySide2.QtWidgets import (
 )
 from PySide2.QtCore import Qt, QProcess
 from PySide2.QtGui import QFont, QIcon
+import GDocsHelperEagle as GDocsHelper
 
 #"C:\Program Files\Autodesk\Maya2024\bin\mayapy.exe" MayaToEagleTool.py
 #pyinstaller --windowed --icon=eagleIcon.ico --add-data "UploadToEagle.py;." MayaToEagleTool.py
@@ -29,20 +30,26 @@ os.environ["MAYA_ENABLE_LEGACY_RENDER_LAYERS"] = "1"
 os.environ["MAYA_NO_CONVERT_LEGACY_RENDER_LAYERS"] = "1"
 os.environ['MAYA_DISABLE_PLUGIN_AUTOLOAD'] = '1'
 import re
+import sys
 import subprocess
 import tempfile
 import traceback
 import shutil
 import json
 import stat
+import datetime
 import maya.standalone
 maya.standalone.initialize(name="python")
 import maya.utils
 import maya.mel as mel
 import maya.cmds as cmds
-if mel.eval('pluginInfo -q -loaded "renderSetup"'):
-    cmds.unloadPlugin("renderSetup", force=True)
-    print("renderSetup plugin was loaded and is now unloaded.")
+summary_json_path = r"{summary_json}"
+try:
+    if mel.eval('pluginInfo -q -loaded "renderSetup"'):
+        cmds.unloadPlugin("renderSetup", force=True)
+        print("renderSetup plugin was loaded and is now unloaded.")
+except Exception as e:
+    print("Warning unloading renderSetup:", e)
 
 propsTags = [
     "wood", "metal", "glass", "stone", "marble", "rock", "boulder", "granite", "tile", "cloth",
@@ -124,10 +131,6 @@ elif is_creature_file:
 elif is_effects_file:
     file_type = "effects"
 
-# === INITIALIZE MAYA STANDALONE FUNCTIONALITY ===
-
-maya.standalone.initialize(name="python")
-
 try:
     # === LOAD SCENE ===
 
@@ -160,7 +163,8 @@ try:
         except RuntimeError as e:
             print(f"Warning: Failed to remove characterLights_templateRN reference: {{e}}")
     try:
-        cmds.file(light_template_path, reference=True, type="mayaAscii", ignoreVersion=True, namespace="characterLights_template", options="v=0;")
+        lightNodes = []
+        lightNodes = cmds.file(light_template_path, reference=True, type="mayaAscii", ignoreVersion=True, namespace="characterLights_template", options="v=0;", returnNewNodes=True)
         print("Referenced characterLights_template.ma successfully.")
     except Exception as e:
         print(f"Failed to reference characterLights_template.ma: {{e}}")
@@ -193,7 +197,7 @@ try:
     else:
         print("Error: The group 'grp_geo' does not exist even after loading references!")
         print("Scene hierarchy:", cmds.ls(dag=True, long=True))
-        cmds.error("The group 'grp_geo' does not exist.")
+        sys.exit(1)
 
     # === COMPUTE INITIAL BOUNDING BOX AND POLY COUNT FOR GRP_GEO AND INITIALIZE JSON DICTIONARY ===
     
@@ -214,18 +218,95 @@ try:
 
     render_data = {{}}
 
-    # === CREATE 2 DUPLICATES OF GRP_GEO IN DIFFERENT PERSPECTIVES ===
+    # === CREATE DUPLICATES OF GRP_GEO IN DIFFERENT PERSPECTIVES ===
 
-    offset1 = x_max + z_max + 0.5
-    dup_grp1 = cmds.duplicate(grp_geo_name, name="grp_geo_dup1")[0]
-    cmds.rotate(0, -90, 0, dup_grp1, relative=True, objectSpace=True)
-    cmds.xform(dup_grp1, ws=True, t=(offset1, 0, 0))
-    amount1 = x_max + z_max + 0.5
-    amount2 = x_max + abs(z_min) + 0.5
-    offset2 = amount1 + amount2
-    dup_grp2 = cmds.duplicate(grp_geo_name, name="grp_geo_dup2")[0]
-    cmds.rotate(0, 180, 0, dup_grp2, relative=True, objectSpace=True)
-    cmds.xform(dup_grp2, ws=True, t=(offset2, 0, 0))
+    views_to_render = json.loads(r'''{views_json}''') or []
+    views_lower = {{str(v).strip().lower() for v in views_to_render}}
+    print("Views passed in:", views_to_render)
+
+    # Default views when no views specified
+    dup_left = dup_top = dup_back = None
+    if not views_lower:
+        offset1 = x_max + z_max + 0.5
+        dup_grp1 = cmds.duplicate(grp_geo_name, name="grp_geo_dup1")[0]
+        cmds.rotate(0, -90, 0, dup_grp1, relative=True, objectSpace=True)
+        cmds.xform(dup_grp1, ws=True, t=(offset1, 0, 0))
+        amount1 = x_max + z_max + 0.5
+
+        dup_grp2 = cmds.duplicate(grp_geo_name, name="grp_geo_dup2")[0]
+        if is_prop_file:
+            cmds.rotate(90, 0, -90, dup_grp2, relative=True, objectSpace=True)  # TOP
+            amount2 = x_max + max(y_max, abs(z_min)) + 0.5
+        else:
+            cmds.rotate(0, 180, 0, dup_grp2, relative=True, objectSpace=True)  # BACK
+            amount2 = x_max + abs(z_min) + 0.5
+
+        offset2 = amount1 + amount2
+        cmds.xform(dup_grp2, ws=True, t=(offset2, 0, 0))
+
+         # For bbox collection later
+        dup_left = dup_top = dup_back = None
+        # Map legacy names to the new variables so the bbox code works uniformly
+        dup_left = dup_grp1
+        dup_top  = dup_grp2 if is_prop_file else None
+        dup_back = dup_grp2 if not is_prop_file else None
+
+    else:
+        # --- Selective behavior driven by views_to_render ---
+        want_front = ('front' in views_lower)
+        want_left  = ('left'  in views_lower)
+        want_back  = ('back'  in views_lower)
+        want_top   = ('top'   in views_lower)
+
+        dup_left = dup_top = dup_back = None
+
+        # We'll place each duplicate immediately to the right of the current content
+        current_right = x_max
+        offset = 0.5
+
+        # LEFT (side)
+        if want_left:
+            dup_left = cmds.duplicate(grp_geo_name, name="grp_geo_left")[0]
+            cmds.rotate(0, -90, 0, dup_left, relative=True, objectSpace=True)
+            bb = cmds.exactWorldBoundingBox(dup_left)       # [minX,minY,minZ,maxX,maxY,maxZ]
+            minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
+            dx = (current_right + offset) - minX
+            cmds.move(dx, 0, 0, dup_left, r=True, ws=True)
+            bb2 = cmds.exactWorldBoundingBox(dup_left)
+            current_right = bb2[3]
+
+        # BACK (create before TOP so TOP is last)
+        if want_back:
+            dup_back = cmds.duplicate(grp_geo_name, name="grp_geo_back")[0]
+            cmds.rotate(0, 180, 0, dup_back, relative=True, objectSpace=True)
+            bb = cmds.exactWorldBoundingBox(dup_back)
+            minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
+            dx = (current_right + offset) - minX
+            cmds.move(dx, 0, 0, dup_back, r=True, ws=True)
+            bb2 = cmds.exactWorldBoundingBox(dup_back)
+            current_right = bb2[3]
+
+        # TOP (now created last, also vertically centered to original)
+        if want_top:
+            dup_top = cmds.duplicate(grp_geo_name, name="grp_geo_top")[0]
+            cmds.rotate(90, 0, -90, dup_top, relative=True, objectSpace=True)
+            bb = cmds.exactWorldBoundingBox(dup_top)
+            minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
+            dx = (current_right + offset) - minX
+            orig_cy = (y_min + y_max) / 2.0
+            dup_cy  = (minY  + maxY) / 2.0
+            dy = (orig_cy - dup_cy)  # center Y to original
+            cmds.move(dx, dy, 0, dup_top, r=True, ws=True)
+            bb2 = cmds.exactWorldBoundingBox(dup_top)
+            current_right = bb2[3]
+
+        # Remove FRONT (original) if not requested — do this after duplications
+        if not want_front:
+            try:
+                cmds.delete(grp_geo_name)
+                print("Removed original grp_geo because 'Front' not requested.")
+            except Exception as e:
+                print("Warning: failed to delete grp_geo:", e)
 
     # === CREATE NEW ORTHOGRAPHIC CAMERA ===
 
@@ -265,14 +346,23 @@ try:
             flat_axis = min(flat_candidates, key=lambda t: t[1])[0]
             print("Flat axis detected by ratio:", flat_axis)
 
-    # === COMPUTE OVERALL BOUNDING BOX OF ALL 3 MESHES ===
+    # === COMPUTE OVERALL BOUNDING BOX OF EXISTING MESHES ===
 
-    overall_bbox = cmds.exactWorldBoundingBox(grp_geo_name, dup_grp1, dup_grp2)
+    bbox_targets = []
+    if cmds.objExists(grp_geo_name):
+        bbox_targets.append(grp_geo_name)
+    for n in (dup_left, dup_top, dup_back):
+        if n and cmds.objExists(n):
+            bbox_targets.append(n)
+    if not bbox_targets:
+        bbox_targets = [grp_geo_name]
+
+    overall_bbox = cmds.exactWorldBoundingBox(*bbox_targets)
     ov_x_min, ov_y_min, ov_z_min, ov_x_max, ov_y_max, ov_z_max = overall_bbox
     margin = 1.05
-    overall_bb_width  = (ov_x_max - ov_x_min) * margin
-    overall_bb_height = (ov_y_max - ov_y_min) * margin
-    overall_bb_depth  = (ov_z_max - ov_z_min) * margin
+    overall_bb_width  = max((ov_x_max - ov_x_min) * margin, 0.01)
+    overall_bb_height = max((ov_y_max - ov_y_min) * margin, 0.01)
+    overall_bb_depth  = max((ov_z_max - ov_z_min) * margin, 0.01)
 
     # === COMPUTE ASPECT RATIO BASED ON BOUNDING BOX SHAPE, COMPUTE PIXEL HEIGHT ===
 
@@ -323,6 +413,8 @@ try:
             ortho_width = max(overall_bb_width, overall_bb_depth) * 1.05
             dynamic_aspect = overall_bb_width / overall_bb_depth
 
+        if ortho_width < 0.0001:
+            ortho_width = 0.01
         pixel_height = int(1920 / dynamic_aspect)
         cmds.xform(camera, ws=True, t=cam_pos)
         cmds.setAttr(f"{{camera}}.rotateX", cam_rot[0])
@@ -348,14 +440,22 @@ try:
     # === SET ORTHO AS THE RENDERABLE CAMERA ===
 
     all_cameras = cmds.ls(type="camera")
-    if "EagleCamera1" or "EagleCamera1Shape" in all_cameras:
+    if "EagleCamera1" in all_cameras or "EagleCamera1Shape" in all_cameras:
         render_camera = "EagleCamera1"
     else:
         print("Warning: EagleCamera1 not found! Using first available camera.")
         render_camera = all_cameras[0]
     for camera in all_cameras:
         cmds.setAttr(f"{{camera}}.renderable", 0)
-    cmds.setAttr(f"{{render_camera}}.renderable", 1)
+    try:
+        cmds.setAttr(f"{{render_camera}}.renderable", 1)
+    except Exception:
+        pass
+    try:
+        render_camera = "EagleCamera1Shape"
+        cmds.setAttr(f"{{render_camera}}.renderable", 1)
+    except Exception:
+        pass
     print(f"{{render_camera}} is now the only renderable camera.")
 
     # === SET OTHER CAMERA SETTINGS ===
@@ -422,6 +522,7 @@ try:
         for attr in SHADERFX_TEXTURE_ATTRS:
             try:
                 filePath = cmds.getAttr('{{}}{{}}'.format(shader, attr))
+                #filePath = cmds.getAttr(shader + attr)
                 if filePath:
                     shader_texture_data[shader].append({{
                         'attribute': attr,
@@ -445,7 +546,7 @@ try:
             keywords.extend(texture_names + cleaned_meshes + [shader.lower()])
         keywords_string = ''.join(keywords)
 
-        print(\n"keywords_string:")
+        print("keywords_string:")
         print(keywords_string)
 
         all_known_tags = set(propsTags + effectsTags + allTags + shaderTags)
@@ -454,22 +555,49 @@ try:
         if 'female' in [t.lower() for t in tagslist]:
             tagslist = [tag for tag in tagslist if tag.lower() != 'male']
         # Remove mask from the tagslist
-            tagslist = [tag for tag in tagslist if tag.lower() != "mask"]
+        tagslist = [tag for tag in tagslist if tag.lower() != "mask"]
         # Add outfit and hair specific tags
         tagslist.extend([tag.lower() for tag in tagged_outfit_parts])
         
         # Save character and creature rig name for notes to be added later
         if is_character_file or is_creature_file:
             if grp_geo_name:
-                ref_node = cmds.referenceQuery(grp_geo_name, referenceNode=True)
-                rigUsed = str(ref_node)
-                rig_tag = re.sub(r'_?rn$', '', rigUsed, flags=re.IGNORECASE)
+                if cmds.referenceQuery(grp_geo_name, isNodeReferenced=True):
+                    ref_node = cmds.referenceQuery(grp_geo_name, referenceNode=True)
+                    rigUsed = str(ref_node)
+                    rig_tag = re.sub(r'_?rn$', '', rigUsed, flags=re.IGNORECASE)
+                else:
+                    print('grp_geo is a local node, not a reference')
             else:
                 print('grp_geo not found')
 
         print("")
         print("Tags:")
         print (tagslist)
+
+    # === GET ALL ML_ RENDER LAYERS IN THE SCENE IF THEY EXIST ===
+
+    all_render_layers = cmds.ls(type="renderLayer")
+    ml_render_layers = [layer for layer in all_render_layers if layer.startswith("ML_")]
+    render_layers_to_process = ["defaultRenderLayer"] + ml_render_layers
+    print(f"Render layers to process: {{render_layers_to_process}}")
+
+    # === ADD LIGHTS TO ML_ RENDER LAYERS ===
+
+    light_root = "characterLights_template:Lights" if cmds.objExists("characterLights_template:Lights") else None
+    for render_layer in ml_render_layers:
+        try:
+            cmds.editRenderLayerGlobals(currentRenderLayer=render_layer)
+            if light_root:
+                cmds.editRenderLayerMembers(render_layer, light_root, noRecurse=False)
+                shapes = cmds.listRelatives(light_root, ad=True, type="shape", f=True) or []
+                if shapes:
+                    cmds.editRenderLayerMembers(render_layer, shapes, noRecurse=True)
+                print(f"Added lights to {{render_layer}}: {{light_root}}")
+            else:
+                print("No valid light group found to add.")
+        except RuntimeError as e:
+            print(f"Failed to add lights to {{render_layer}}: {{e}}")
 
     # === SAVE A TEMPORARY SCENE TO RENDER ===
 
@@ -487,13 +615,6 @@ try:
     cmds.file(rename=temp_scene_path)
     cmds.file(save=True, type="mayaAscii")
     print(f"Temporary scene saved: {{temp_scene_path}}")
-
-    # === GET ALL ML_ RENDER LAYERS IN THE SCENE IF THEY EXIST ===
-
-    all_render_layers = cmds.ls(type="renderLayer")
-    ml_render_layers = [layer for layer in all_render_layers if layer.startswith("ML_")]
-    render_layers_to_process = ["defaultRenderLayer"] + ml_render_layers
-    print(f"Render layers to process: {{render_layers_to_process}}")
 
     # === LOOP THROUGH EACH RENDER LAYER AND RENDER SEPARATELY ===
 
@@ -535,14 +656,14 @@ try:
             temp_scene_path
         ]
 
-        print(\n""\n)
+
         print("Executing Render.exe with command:")
-        print(\n""\n)
+
         print(" ".join(render_cmd))
 
         # === RUN THE RENDERING PROCESS ===
 
-        process = subprocess.run(render_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.run(render_cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # bail out if Render.exe failed, Exit MAYA_SCRIPT entirely
         if process.returncode != 0:
@@ -630,7 +751,7 @@ try:
 
         print(f"Recorded JSON data for image: {{image_key}}")
 
-    # === WRITE JSON FILE ===
+    # === WRITE EAGLE JSON FILE ===
 
     #library_root = os.path.dirname(output_dir)
     base_library = os.path.join(os.path.splitdrive(output_dir)[0] + os.sep, "Perforce", "Potter", "Art", "EagleFiles")
@@ -662,12 +783,46 @@ try:
     )
 
     # Write merged data back to file
+    if os.path.exists(json_file):
+        try:
+            os.chmod(json_file, stat.S_IWRITE)
+        except Exception as e:
+            print(f"Warning: Could not make JSON file writable: {{e}}")
     try:
         with open(json_file, "w") as jf:
             jf.write(json_str)
         print("Render JSON data written to:", json_file)
     except Exception as e:
         print(f"Failed to write JSON file: {{e}}")
+
+    # === WRITE SUMMARY JSON DATA ===
+    try:
+        asset_name = os.path.splitext(os.path.basename(original_scene))[0]
+        num_shaders = len(connected_shaders)
+        num_textures = sum(len(v) for v in shader_texture_data.values())
+        # simple missing-textures check (optional)
+        missing_textures = any(
+            (t.get('filePath') and not os.path.exists(t['filePath']))
+            for texlist in shader_texture_data.values() for t in texlist
+        )
+        # Perforce-style scene path
+        scene_rel = original_scene.replace(os.sep, "/").split("/Perforce/", 1)[-1]
+        p4_path = f"//{{scene_rel}}"
+
+        summary = {{
+            "type": file_type,                 # e.g. "props", "effects"
+            "asset": asset_name,               # scene name minus .ma
+            "path": p4_path,                   # Perforce-style path
+            "polycount": poly_count,
+            "num_textures": num_textures,
+            "num_shaders": num_shaders,
+            "missing_textures": missing_textures
+        }}
+        with open(summary_json_path, "w") as sf:
+            json.dump(summary, sf)
+        print("[EAGLE_SUMMARY]", json.dumps(summary))  # optional breadcrumb
+    except Exception as e:
+        print("Failed to write summary JSON:", e)
 
     # === CLEANUP: REMOVE TEMP SCENE FILE AFTER ALL RENDERS COMPLETE ===
 
@@ -696,6 +851,7 @@ class MayaRenderGUI(QWidget):
         self.process = None
         self.scene_files = []
         self.current_index = 0
+        self.gdocs = GDocsHelper.GDocs()
         self.initUI()
 
     def initUI(self):
@@ -769,7 +925,7 @@ class MayaRenderGUI(QWidget):
         scene_layout.addWidget(self.scene_folder_browse)
         main_layout.addLayout(scene_layout)
 
-        self.overwrite_checkbox = QCheckBox("Do Not Overwrite Existing Images")
+        self.overwrite_checkbox = QCheckBox("Re-Render Existing Entries")
         self.overwrite_checkbox.setChecked(True)
         main_layout.addWidget(self.overwrite_checkbox)
 
@@ -884,6 +1040,52 @@ class MayaRenderGUI(QWidget):
             print(f"[ERROR] Failed to clean {filepath}: {e}")
             return False
         
+    def get_checked_views(self, scene_file, summary=None):
+        """
+        Return a list of views (Front/Left/Back/Top) to use for this scene.
+        If new entry: defaults → FLB, props → FLT).
+        If existing entry: read from sheet checkboxes.
+        """
+        output_dir = self.get_output_dir_for_file(scene_file) or ""
+        sheet  = GDocsHelper._category_from_output_dir(output_dir)
+        asset  = os.path.splitext(os.path.basename(scene_file))[0]
+
+        try:
+            row, row_num = self.gdocs.getRow(sheet, asset)
+            if row is None:
+                # New entry defaults
+                type_value = None
+                if summary and summary.get('type'):
+                    type_value = str(summary.get('type')).lower()
+                else:
+                    type_value = GDocsHelper._normalize_sheet_id(sheet).lower()
+
+                if type_value.startswith("prop"):
+                    return ["Front", "Left", "Top"]
+                else:
+                    return ["Front", "Left", "Back"]
+            else:
+                # Existing entry → checkboxes from sheet
+                row_dict = self.gdocs.to_dict(sheet, row)
+                checked = []
+                for key, label in (('front', 'Front'), ('left', 'Left'), ('back', 'Back'), ('top', 'Top')):
+                    v = row_dict.get(key)
+                    if v and str(v).strip().lower() in ("true", "yes", "y", "1", "checked", "on", "☑", "☒"):
+                        checked.append(label)
+                return checked
+        except Exception as e:
+            self.log_output.append(f"[ERROR] get_checked_views failed for {asset}: {e}")
+            return []
+        
+    def views_to_checkbox_payload(self, views):
+        views_lower = {v.strip().lower() for v in (views or [])}
+        return {
+            'front': 'front' in views_lower,
+            'left':  'left'  in views_lower,
+            'back':  'back'  in views_lower,
+            'top':   'top'   in views_lower,
+        }
+
     def record_failure(self, scene_file, note=""):
         """
         Append the scene path to MayaToEagleFailures_log.txt.
@@ -909,6 +1111,12 @@ class MayaRenderGUI(QWidget):
         if not scene_folder:
             self.log_output.append("Error: Please select a scene folder.")
             return
+        
+        # Force fresh read from Google Sheets on each run
+        try:
+            self.gdocs = GDocsHelper.GDocs()
+        except Exception as e:
+            self.log_output.append(f"[WARN] Could not reset Google Sheets helper: {e}")
 
         # Scan for .ma files meeting the criteria.
         self.scene_files = []
@@ -961,30 +1169,71 @@ class MayaRenderGUI(QWidget):
                 except Exception as e:
                     self.log_output.append("Error creating output directory: " + str(e))
                     return
-            
-            # Check if we should skip this file if it already exists
+
+            # Skip based on sheet state and overwrite checkbox
             base_filename = os.path.splitext(os.path.basename(scene_file))[0]
-            clean_base = re.sub(r'\.\d+$', '', base_filename)
-            clean_base = re.sub(r'^(c_|o_|p_|fx_|.+?_)', '', clean_base)
-            clean_base = re.sub(r'_rig$', '', clean_base)
-            existing_images = [
-                f for f in os.listdir(output_dir)
-                if f.lower().endswith(".png") and os.path.splitext(f)[0].lower() == clean_base.lower()
-            ]
-            if self.overwrite_checkbox.isChecked() and existing_images:
-                self.log_output.append(f"\n=== Skipping render. Existing render image found for: {base_filename} ===\n")
-                self.current_index += 1
-                self.progress_bar.setValue(self.current_index)
-                self.run_next_render()
-                return
-            
+            try:
+                sheet = GDocsHelper._category_from_output_dir(output_dir)
+                asset = os.path.splitext(os.path.basename(scene_file))[0]
+                row, _ = self.gdocs.getRow(sheet, asset)
+
+                skip = False
+                skip_msg = None
+
+                if row is not None:
+                    if not self.overwrite_checkbox.isChecked():
+                        # UNCHECKED: skip if an entry already exists
+                        skip = True
+                        skip_msg = f"Entry already exists in sheet for: {base_filename}"
+                    else:
+                        # CHECKED: skip only if views match "Previously Rendered"
+                        row_dict = self.gdocs.to_dict(sheet, row)  # cleaned keys
+                        allowed = {"Front", "Left", "Back", "Top"}
+                        prev_raw = str(row_dict.get('previouslyrendered', '') or '')
+                        prev_set = {t.title() for t in re.split(r'[,\s/;]+', prev_raw) if t.strip()} & allowed
+
+                        TRUE_VALUES = {'true','yes','y','1','checked','on','☑','☒'}
+                        selected_set = {
+                            label for key, label in (('front','Front'), ('left','Left'), ('back','Back'), ('top','Top'))
+                            if str(row_dict.get(key)).strip().lower() in TRUE_VALUES
+                        } & allowed
+
+                        if prev_set == selected_set and prev_set:
+                            skip = True
+                            skip_msg = (
+                                f"'Previously Rendered' matches selected views "
+                                f"({', '.join(sorted(selected_set))}) for: {base_filename}"
+                            )
+                if skip:
+                    self.log_output.append(f"\n=== Skipping render. {skip_msg} ===\n")
+                    self.current_index += 1
+                    self.progress_bar.setValue(self.current_index)
+                    self.run_next_render()
+                    return
+            except Exception as e:
+                self.log_output.append(f"[WARN] Could not evaluate skip rule: {e}")
+
             log_dir = self.get_base_path()
+            asset_name   = os.path.splitext(os.path.basename(scene_file))[0]
+            summary_path = os.path.join(self.get_base_path(), f"summary_{asset_name}.json")
+            try:
+                if os.path.exists(summary_path):
+                    os.remove(summary_path)
+            except Exception:
+                pass
+
+            # Get checked camera angles
+            views = self.get_checked_views(scene_file)
+            # For now, just print them to log (or pass to Maya script later)
+            self.log_output.append(f"[EAGLE] Views for {os.path.basename(scene_file)}: {', '.join(views) if views else 'None'}")
 
             # Format the Maya script with the current scene file and its specific output directory
             formatted_script = MAYA_SCRIPT.format(
                 scene_file=scene_file,
                 output_dir=output_dir,
-                log_dir=log_dir
+                log_dir=log_dir,
+                summary_json=summary_path,
+                views_json=json.dumps(views)
             )
 
             # Write the temporary Maya script
@@ -1127,12 +1376,16 @@ class MayaRenderGUI(QWidget):
         
         # if it failed, write to failures log
         CRASH_CODES = {3221225477, 3221225785} 
+        crashed = 'No'
         if exitCode == 0:
             self.log_output.append(f"✔️ Process succeeded: {scene_file}")
+            crashed = 'No'
         elif exitCode in CRASH_CODES or exitCode < 0:
             self.record_failure(scene_file, "LARGE TEXTURE CRASH")
+            crashed = 'Yes, Large Texture Crash'
         else:
             self.record_failure(scene_file, "PLUGIN OR OTHER ERROR")
+            crashed = 'Yes, plugin or other error'
 
         # clean up the temp script
         if os.path.exists(script_path):
@@ -1141,7 +1394,49 @@ class MayaRenderGUI(QWidget):
                 self.log_output.append("\nCleanup complete.")
             except Exception as e:
                 self.log_output.append("Error removing temporary script file: " + str(e))
-        
+
+        # write from Eagle json to google sheets
+        try:
+            asset_name   = os.path.splitext(os.path.basename(scene_file))[0]
+            summary_path = os.path.join(self.get_base_path(), f"summary_{asset_name}.json")
+            summary = None
+            if os.path.exists(summary_path):
+                with open(summary_path, "r") as f:
+                    summary = json.load(f)
+                os.remove(summary_path)
+
+            output_dir = self.get_output_dir_for_file(scene_file) or ""
+            sheet  = GDocsHelper._category_from_output_dir(output_dir)
+            asset  = os.path.splitext(os.path.basename(scene_file))[0]
+            p4     = GDocsHelper._to_p4_path(scene_file)
+
+            views_for_sheet = self.get_checked_views(scene_file)
+            checkbox_payload = self.views_to_checkbox_payload(views_for_sheet)
+
+            payload = {'asset': asset, 'path': p4}
+            payload.update(checkbox_payload)
+            if summary:
+                payload.update({
+                    'type':        summary.get('type'),
+                    'polycount':        summary.get('polycount'),
+                    'numberoftextures': summary.get('num_textures'),
+                    'numberofshaders':  summary.get('num_shaders'),
+                    'missingtextures':  'Yes' if summary.get('missing_textures') else 'No',
+                })
+            payload['crashed'] = crashed
+
+            # Only fill 'Previously Rendered' if this is not a new entry.
+            existing_row, _ = self.gdocs.getRow(sheet, asset)
+            if existing_row is not None:
+                order = [('front', 'Front'), ('left', 'Left'), ('back', 'Back'), ('top', 'Top')]
+                previously_rendered = ", ".join(label for key, label in order if bool(payload.get(key)))
+                payload['Previously Rendered'] = previously_rendered
+
+            self.gdocs.doUpdateConfig(sheet, payload)
+
+        except Exception as e:
+            self.log_output.append(f"Sheets update failed: {e}")
+
         # advance to next file
         self.current_index += 1
         self.progress_bar.setValue(self.current_index)
