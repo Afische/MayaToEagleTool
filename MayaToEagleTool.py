@@ -5,19 +5,19 @@ import stat
 import json
 import shutil
 import subprocess
+import requests
 from PySide2.QtWidgets import (
-    QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QTextEdit, QFileDialog, QCheckBox, QMessageBox, QProgressBar
+    QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit,
+    QLineEdit, QTextEdit, QFileDialog, QCheckBox, QMessageBox, QProgressBar, QComboBox
 )
 from PySide2.QtCore import Qt, QProcess
 from PySide2.QtGui import QFont, QIcon
 import GDocsHelperEagle as GDocsHelper
 
-#"C:\Program Files\Autodesk\Maya2024\bin\mayapy.exe" MayaToEagleTool.py
-#pyinstaller --windowed --icon=eagleIcon.ico --add-data "UploadToEagle.py;." MayaToEagleTool.py
-
 # Path to Maya’s mayapy executable
 MAYA_BIN = r"C:/Program Files/Autodesk/Maya2024/bin/mayapy.exe"
+EAGLE_API_LIST = "http://localhost:41595/api/item/list"
+EAGLE_API_MOVE_TO_TRASH = "http://localhost:41595/api/item/moveToTrash"
 
 ###############################################################################
 # Maya code: Saves changes to a temp .ma file which is deleted after render
@@ -37,7 +37,6 @@ import traceback
 import shutil
 import json
 import stat
-import datetime
 import maya.standalone
 maya.standalone.initialize(name="python")
 import maya.utils
@@ -50,6 +49,14 @@ try:
         print("renderSetup plugin was loaded and is now unloaded.")
 except Exception as e:
     print("Warning unloading renderSetup:", e)
+
+# ensure Arnold attrs exist so ASCII parses cleanly
+try:
+    if not cmds.pluginInfo("mtoa", q=True, loaded=True):
+        cmds.loadPlugin("mtoa", quiet=True)
+        print("[Init] Loaded mtoa for Arnold attributes.")
+except Exception as e:
+    print("[Init] mtoa not available (continuing):", e)
 
 propsTags = [
     "wood", "metal", "glass", "stone", "marble", "rock", "boulder", "granite", "tile", "cloth",
@@ -132,26 +139,97 @@ elif is_effects_file:
     file_type = "effects"
 
 try:
-    # === LOAD SCENE ===
 
+    # === CLEAN SCENE OF POTENTIAL BAD DEFAULT REFERENCE LAYERS ==
+
+    did_rehost = False
+    cleanScene = False
     cmds.file(original_scene, open=True, force=True)
-    if not cmds.file(query=True, sceneName=True):
-        print("!!! ERROR: Maya failed to open the scene file !!!")
     scene_loaded = cmds.file(query=True, sceneName=True)
     print("Scene loaded path:", scene_loaded)
-    if not scene_loaded:
+    if cmds.objExists("defaultRenderLayer"):
+        try:
+            if not cmds.referenceQuery("defaultRenderLayer", isNodeReferenced=True):
+                # local defaultRenderLayer exists
+                current = None
+                try:
+                    current = cmds.editRenderLayerGlobals(q=True, currentRenderLayer=True)
+                except:
+                    pass
+                if current == "defaultRenderLayer":
+                    cleanScene = True
+        except:
+            pass
+    if not cleanScene:
+        # Open original, export assemblies, import into fresh scene, rebuild defaultRenderLayer
+        assemblies = [n for n in cmds.ls(assemblies=True) if n not in ("front", "persp", "side", "top")]
+        cmds.select(assemblies, r=True)
+        tmpPath = cmds.internalVar(userTmpDir=True).replace("\\\\", "/") + "temp_scene_export.ma"
+        cmds.file(tmpPath, es=True, force=True, type="mayaAscii", options="v=0")
+        cmds.file(new=True, force=True)
+        cmds.file(tmpPath, i=True, mergeNamespacesOnClash=True, namespace=":")
+        try:
+            rehost_path = os.path.join(tempfile.gettempdir(), "rehost_working_scene.ma").replace("\\\\", "/")
+            cmds.file(rename=rehost_path)
+            cmds.file(save=True, type="mayaAscii")
+            scene_loaded = rehost_path  # keep logs/logic happy
+            print(f"[Rehost] Saved working scene to: {{rehost_path}}")
+        except Exception as e:
+            print(f"[Rehost] Could not save rehosted scene: {{e}}")
+        # Ensure a manager exists
+        if not cmds.objExists("renderLayerManager"):
+            try:
+                cmds.createNode("renderLayerManager", name="renderLayerManager")
+            except:
+                pass
+        # Make sure defaultRenderLayer exists and is current+renderable
+        if not cmds.objExists("defaultRenderLayer"):
+            try:
+                cmds.createNode("renderLayer", name="defaultRenderLayer", shared=True)
+                print("[Layers] Created defaultRenderLayer")
+            except Exception as e:
+                print(f"[Layers] Could not create defaultRenderLayer: {{e}}")
+        layerName = "defaultRenderLayer"
+        try:
+            cmds.editRenderLayerGlobals(currentRenderLayer=layerName)
+            if cmds.objExists(f"{{layerName}}.renderable"):
+                cmds.setAttr(f"{{layerName}}.renderable", 1)
+        except:
+            pass
+        try:
+            os.remove(tmpPath)
+        except:
+            pass
+        did_rehost = True
+        print("[Cleaned scene of bad render layers]")
+    else:
+        print("Scene render layers are good")
+
+    # === LOAD SCENE ===
+
+    if not did_rehost:
+        cmds.file(original_scene, open=True, force=True)
+        scene_loaded = cmds.file(query=True, sceneName=True)
+        if not scene_loaded:
+            print("!!! ERROR: Maya failed to open the scene file !!!")
+    print("Scene loaded path:", scene_loaded)
+    if (not did_rehost) and (not scene_loaded):
         print("!!! ERROR: Maya failed to open the scene file (empty sceneName) !!!")
     print(f"Opened original scene: {{original_scene}}")
     project_dir = cmds.workspace(q=True, rootDirectory=True)
 
-    #scene_path = r"{scene_file}"
-    #if not cmds.file(query=True, sceneName=True):
-    #    cmds.file(scene_path, open=True, force=True)
-    #    print("Scene loaded:", scene_path)
-    #all_refs = cmds.file(query=True, reference=True)
-    #if all_refs:
-    #    for ref in all_refs:
-    #        cmds.file(ref, loadReference=True)
+    # === CLEANUP ORPHAN REFERENCE NODES ===
+
+    for rn in cmds.ls(type='reference'):
+        try:
+            _ = cmds.referenceQuery(rn, filename=True)
+        except RuntimeError:
+            try:
+                cmds.lockNode(rn, l=False)
+                cmds.delete(rn)
+                print("Deleted orphan reference node:", rn)
+            except Exception as e:
+                print("Could not delete orphan reference node:", rn, e)
 
     # === ENSURE CHARACTER LIGHTING IS IMPORTED ===
 
@@ -171,15 +249,29 @@ try:
 
     # === HIDE ALL MESHES UNDER ANY NonExportGeo GROUP IN THE SCENE ===
 
-    all_render_layers = cmds.ls(type="renderLayer")
+    all_render_layers = cmds.ls(type="renderLayer") or []
     ml_render_layers = [layer for layer in all_render_layers if layer.startswith("ML_")]
-    render_layers_to_process = ["defaultRenderLayer"] + ml_render_layers
+    render_layers_to_process = []
+    current_layer = cmds.editRenderLayerGlobals(q=True, currentRenderLayer=True)
+    render_layers_to_process = [current_layer] + ml_render_layers
+
     for render_layer in render_layers_to_process:
-        cmds.editRenderLayerGlobals(currentRenderLayer=render_layer)
-        non_export_groups = [x for x in cmds.ls("NonExportGeo", type="transform", long=True)]
-        for group in non_export_groups:
-            non_export_descendants = cmds.listRelatives(group, allDescendents=True, fullPath=True) or []
-            for node in non_export_descendants:
+        try:
+            _is_ref = False
+            try:
+                _is_ref = cmds.referenceQuery(render_layer, isNodeReferenced=True)
+            except Exception:
+                _is_ref = False
+            if not (render_layer == "defaultRenderLayer" and _is_ref):
+                cmds.editRenderLayerGlobals(currentRenderLayer=render_layer)
+            else:
+                print(f"[Layer] '{{render_layer}}' is referenced; not making it current.")
+        except Exception as _e:
+            print(f"[Layer] Could not set currentRenderLayer='{{render_layer}}': {{_e}}")
+
+        print(f"Processing (or safely skipping) render layer: {{render_layer}}")
+        for group in (cmds.ls("NonExportGeo", type="transform", long=True) or []):
+            for node in (cmds.listRelatives(group, allDescendents=True, fullPath=True) or []):
                 if cmds.nodeType(node) == 'mesh':
                     transform = cmds.listRelatives(node, parent=True, fullPath=True)
                     if transform:
@@ -191,6 +283,8 @@ try:
     geo_candidates = [x for x in cmds.ls(type="transform", long=True) if x.endswith("|grp_geo")]
     if not geo_candidates:
         geo_candidates = cmds.ls("Char_Rig|grp_other|grp_geo", long=True)
+    if not geo_candidates:
+        geo_candidates = cmds.ls("|*|grp_mesh", long=True)
     if geo_candidates:
         grp_geo_name = geo_candidates[0]
         print(f"Found `grp_geo`: {{grp_geo_name}}")
@@ -199,23 +293,30 @@ try:
         print("Scene hierarchy:", cmds.ls(dag=True, long=True))
         sys.exit(1)
 
-    # === COMPUTE INITIAL BOUNDING BOX AND POLY COUNT FOR GRP_GEO AND INITIALIZE JSON DICTIONARY ===
+    # === COMPUTE INITIAL BOUNDING BOX FOR GRP_GEO AND REMOVE ANY DEFORMER HISTORY ===
     
     bbox = cmds.exactWorldBoundingBox(grp_geo_name)
     x_min, y_min, z_min, x_max, y_max, z_max = bbox
     bbox_width = x_max - x_min
     bbox_height = y_max - y_min
     bbox_depth = z_max - z_min
-
     meshes = cmds.listRelatives(grp_geo_name, allDescendents=True, type="mesh") or []
-    poly_count = 0
-    for mesh in meshes:
-        if not cmds.getAttr(f"{{mesh}}.intermediateObject"):
-            #poly_count += cmds.polyEvaluate(mesh, face=True)
-            poly_count += cmds.polyEvaluate(mesh, triangle=True)
+    mesh_shapes = cmds.ls(meshes, ni=True, l=True) or []
     print(f"grp_geo bounding box: width={{bbox_width}}, height={{bbox_height}}, depth={{bbox_depth}}")
-    print(f"Polygon count for grp_geo: {{poly_count}}")
+            
+    # === CALCULATE POLY COUNT AND INITIALIZE JSON DICTIONARY===
 
+    poly_count = 0
+    for mesh in mesh_shapes:
+        try:
+            tri = cmds.polyEvaluate(mesh, triangle=True)
+            if isinstance(tri, dict):
+                tri = sum(tri.values())
+            poly_count += (tri or 0)
+        except:
+            pass
+
+    print(f"Polygon count for grp_geo: {{poly_count}}")
     render_data = {{}}
 
     # === CREATE DUPLICATES OF GRP_GEO IN DIFFERENT PERSPECTIVES ===
@@ -243,64 +344,59 @@ try:
 
         offset2 = amount1 + amount2
         cmds.xform(dup_grp2, ws=True, t=(offset2, 0, 0))
-
-         # For bbox collection later
         dup_left = dup_top = dup_back = None
-        # Map legacy names to the new variables so the bbox code works uniformly
         dup_left = dup_grp1
         dup_top  = dup_grp2 if is_prop_file else None
         dup_back = dup_grp2 if not is_prop_file else None
 
     else:
-        # --- Selective behavior driven by views_to_render ---
+        # Selected views to render
         want_front = ('front' in views_lower)
         want_left  = ('left'  in views_lower)
         want_back  = ('back'  in views_lower)
         want_top   = ('top'   in views_lower)
-
         dup_left = dup_top = dup_back = None
+        
+        # Use a gap that scales with the original grp_geo width
+        orig_bb = cmds.exactWorldBoundingBox(grp_geo_name)
+        orig_width = max(orig_bb[3] - orig_bb[0], 0.001)
+        offset = 0.05
+        gap = orig_width * offset
 
-        # We'll place each duplicate immediately to the right of the current content
-        current_right = x_max
-        offset = 0.5
+        # Get right edge of bounding box
+        current_right = orig_bb[3]
 
-        # LEFT (side)
         if want_left:
             dup_left = cmds.duplicate(grp_geo_name, name="grp_geo_left")[0]
             cmds.rotate(0, -90, 0, dup_left, relative=True, objectSpace=True)
-            bb = cmds.exactWorldBoundingBox(dup_left)       # [minX,minY,minZ,maxX,maxY,maxZ]
+            bb = cmds.exactWorldBoundingBox(dup_left)
             minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
-            dx = (current_right + offset) - minX
+            dx = (current_right + gap) - minX
             cmds.move(dx, 0, 0, dup_left, r=True, ws=True)
-            bb2 = cmds.exactWorldBoundingBox(dup_left)
-            current_right = bb2[3]
+            current_right = cmds.exactWorldBoundingBox(dup_left)[3]
 
-        # BACK (create before TOP so TOP is last)
         if want_back:
             dup_back = cmds.duplicate(grp_geo_name, name="grp_geo_back")[0]
             cmds.rotate(0, 180, 0, dup_back, relative=True, objectSpace=True)
             bb = cmds.exactWorldBoundingBox(dup_back)
             minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
-            dx = (current_right + offset) - minX
+            dx = (current_right + gap) - minX
             cmds.move(dx, 0, 0, dup_back, r=True, ws=True)
-            bb2 = cmds.exactWorldBoundingBox(dup_back)
-            current_right = bb2[3]
+            current_right = cmds.exactWorldBoundingBox(dup_back)[3]
 
-        # TOP (now created last, also vertically centered to original)
         if want_top:
             dup_top = cmds.duplicate(grp_geo_name, name="grp_geo_top")[0]
             cmds.rotate(90, 0, -90, dup_top, relative=True, objectSpace=True)
             bb = cmds.exactWorldBoundingBox(dup_top)
             minX, minY, maxX, maxY = bb[0], bb[1], bb[3], bb[4]
-            dx = (current_right + offset) - minX
+            dx = (current_right + gap) - minX
             orig_cy = (y_min + y_max) / 2.0
             dup_cy  = (minY  + maxY) / 2.0
-            dy = (orig_cy - dup_cy)  # center Y to original
+            dy = (orig_cy - dup_cy)
             cmds.move(dx, dy, 0, dup_top, r=True, ws=True)
-            bb2 = cmds.exactWorldBoundingBox(dup_top)
-            current_right = bb2[3]
+            current_right = cmds.exactWorldBoundingBox(dup_top)[3]
 
-        # Remove FRONT (original) if not requested — do this after duplications
+        # Remove FRONT (original) if not requested
         if not want_front:
             try:
                 cmds.delete(grp_geo_name)
@@ -312,19 +408,21 @@ try:
 
     if cmds.objExists("EagleCamera1"):
         cmds.delete("EagleCamera1")
-    camera = cmds.camera(name="EagleCamera1")[0]
-    camera_shapes = cmds.listRelatives(camera, shapes=True)
+
+    camera_transform = cmds.camera(name="EagleCamera1")[0]  # transform node
+    camera_shapes = cmds.listRelatives(camera_transform, shapes=True) or []
     if camera_shapes:
-        cameraShape = camera_shapes[0]
-        cmds.rename(cameraShape, "EagleCamera1Shape")
-        cameraShape = "EagleCamera1Shape"
+        # Rename to a stable, known shape name
+        camera_shape = cmds.rename(camera_shapes[0], "EagleCamera1Shape")
     else:
         print("Error: Camera shape not found!")
         cmds.error("Camera shape missing after creation.")
-    cmds.setAttr(f"{{cameraShape}}.renderable", True)
-    cmds.setAttr(f"{{cameraShape}}.orthographic", True)
-    cmds.setAttr(f"{{cameraShape}}.orthographicWidth", 10.0)
-    print("Created camera:", camera, "with shape:", cameraShape)
+
+    # Toggle attributes on the SHAPE
+    cmds.setAttr(camera_shape + ".renderable", True)
+    cmds.setAttr(camera_shape + ".orthographic", True)
+    cmds.setAttr(camera_shape + ".orthographicWidth", 10.0)
+    print("Created camera:", camera_transform, "with shape:", camera_shape)
 
     # === DETECT IF THIS IS A FLAT PLANE FOR EFFECTS FILES AND ADJUST CAMERA ===
 
@@ -377,12 +475,12 @@ try:
 
     cmds.setAttr("defaultResolution.width", 1920)
     cmds.setAttr("defaultResolution.height", pixel_height)
-    cmds.setAttr(f"{{cameraShape}}.orthographicWidth", overall_bb_width)
+    cmds.setAttr(f"{{camera_shape}}.orthographicWidth", overall_bb_width)
     cmds.setAttr("defaultResolution.deviceAspectRatio", dynamic_aspect)
     print("Render resolution set to 1920 x", pixel_height)
     print("Orthographic width set to:", overall_bb_width)
     # Set the near clip plane to 0.001
-    #cmds.setAttr(f"{{cameraShape}}.nearClipPlane", 0.001)
+    #cmds.setAttr(f"{{camera_shape}}.nearClipPlane", 0.001)
 
     # === AUTO-CENTER CAMERA BASED ON FLATNESS OR DEFAULT ===
 
@@ -407,7 +505,7 @@ try:
             dynamic_aspect = overall_bb_depth / overall_bb_height
 
         elif flat_axis == 'Y':
-            # Camera looking from above (top-down)
+            # Camera looking from above
             cam_pos = [center_x, ov_y_max + 100, center_z]
             cam_rot = [-90, 0, 0]
             ortho_width = max(overall_bb_width, overall_bb_depth) * 1.05
@@ -416,11 +514,11 @@ try:
         if ortho_width < 0.0001:
             ortho_width = 0.01
         pixel_height = int(1920 / dynamic_aspect)
-        cmds.xform(camera, ws=True, t=cam_pos)
-        cmds.setAttr(f"{{camera}}.rotateX", cam_rot[0])
-        cmds.setAttr(f"{{camera}}.rotateY", cam_rot[1])
-        cmds.setAttr(f"{{camera}}.rotateZ", cam_rot[2])
-        cmds.setAttr(f"{{cameraShape}}.orthographicWidth", ortho_width)
+        cmds.xform(camera_transform, ws=True, t=cam_pos)
+        cmds.setAttr(f"{{camera_transform}}.rotateX", cam_rot[0])
+        cmds.setAttr(f"{{camera_transform}}.rotateY", cam_rot[1])
+        cmds.setAttr(f"{{camera_transform}}.rotateZ", cam_rot[2])
+        cmds.setAttr(camera_shape + ".orthographicWidth", overall_bb_width)
         print(f"[Camera] Camera positioned at {{cam_pos}} with rotation {{cam_rot}}")
         print(f"[Camera] Ortho width: {{ortho_width}}, aspect: {{dynamic_aspect}}, height: {{pixel_height}}")
 
@@ -430,33 +528,29 @@ try:
         center_y = (ov_y_min + ov_y_max) / 2.0
         global_z_max = ov_z_max
         cam_pos = (center_x, center_y, global_z_max + 100)
-        cmds.xform(camera, ws=True, t=cam_pos)
+        cmds.xform(camera_transform, ws=True, t=cam_pos)
         dynamic_aspect = overall_bb_width / overall_bb_height
         pixel_height = int(1920 / dynamic_aspect)
-        cmds.setAttr(f"{{cameraShape}}.orthographicWidth", overall_bb_width)
+        cmds.setAttr(f"{{camera_shape}}.orthographicWidth", overall_bb_width)
         print("[Camera] Default camera positioning:", cam_pos)
         print(f"[Camera] Default ortho width: {{overall_bb_width}}, aspect: {{dynamic_aspect}}, height: {{pixel_height}}")
 
     # === SET ORTHO AS THE RENDERABLE CAMERA ===
 
-    all_cameras = cmds.ls(type="camera")
-    if "EagleCamera1" in all_cameras or "EagleCamera1Shape" in all_cameras:
-        render_camera = "EagleCamera1"
-    else:
-        print("Warning: EagleCamera1 not found! Using first available camera.")
-        render_camera = all_cameras[0]
-    for camera in all_cameras:
-        cmds.setAttr(f"{{camera}}.renderable", 0)
+    # Disable renderable on all camera shapes
+    for cam_shape in (cmds.ls(type="camera") or []):
+        try:
+            cmds.setAttr(cam_shape + ".renderable", 0)
+        except Exception:
+            pass
+    # Enable only our camera's SHAPE
     try:
-        cmds.setAttr(f"{{render_camera}}.renderable", 1)
+        cmds.setAttr(camera_shape + ".renderable", 1)
     except Exception:
         pass
-    try:
-        render_camera = "EagleCamera1Shape"
-        cmds.setAttr(f"{{render_camera}}.renderable", 1)
-    except Exception:
-        pass
-    print(f"{{render_camera}} is now the only renderable camera.")
+    # We'll pass the TRANSFORM to Render.exe
+    render_cam_transform = camera_transform
+    print("[Camera] Using transform for Render.exe:", render_cam_transform)
 
     # === SET OTHER CAMERA SETTINGS ===
 
@@ -474,14 +568,8 @@ try:
 
     # === EXTRACT MESH-SHADER-TEXTURE DATA FROM ALL MESHES UNDER GRP_GEO ===
     
-    # Get all ShaderfxShader nodes
     SHADERFX_SHADERS = cmds.ls(type='ShaderfxShader')
-    SHADERFX_TEXTURE_ATTRS = (
-        '.DiffuseMap', '.LightmapMap', '.SpecularMap',
-        '.DirtMap', '.SecondDiffuseMap', '.Diffuse',
-        '.SecondaryMaps', '.ColorMap', '.Mask'
-    )
-
+    SHADERFX_TEXTURE_ATTRS = ('.DiffuseMap', '.LightmapMap', '.SpecularMap','.DirtMap', '.SecondDiffuseMap', '.Diffuse','.SecondaryMaps', '.ColorMap', '.Mask')
     shader_texture_data = {{}}
 
     # Get all meshes under grp_geo
@@ -492,7 +580,6 @@ try:
         for m in all_descendants:
             if cmds.nodeType(m) == 'mesh':
                 meshes_under_grp_geo.append(m)
-
                 # If this is an outfit or hair file perform outfit tag check 
                 if is_outfit_file or is_hair_file:
                     parent_chain = cmds.listRelatives(m, allParents=True, fullPath=True) or []
@@ -531,11 +618,12 @@ try:
             except Exception as e:
                 print(f"Skipping {{shader}}{{attr}} due to error: {{e}}")
                 continue
-                
+
     # === CREATE TAGS FROM SHADER TEXTURE MESH DATA ===
 
     keywords = []
     rigUsed = ""
+    rig_tag = ""
     if not shader_texture_data:
         tagslist = []
     else:
@@ -570,17 +658,9 @@ try:
                     print('grp_geo is a local node, not a reference')
             else:
                 print('grp_geo not found')
-
         print("")
         print("Tags:")
         print (tagslist)
-
-    # === GET ALL ML_ RENDER LAYERS IN THE SCENE IF THEY EXIST ===
-
-    all_render_layers = cmds.ls(type="renderLayer")
-    ml_render_layers = [layer for layer in all_render_layers if layer.startswith("ML_")]
-    render_layers_to_process = ["defaultRenderLayer"] + ml_render_layers
-    print(f"Render layers to process: {{render_layers_to_process}}")
 
     # === ADD LIGHTS TO ML_ RENDER LAYERS ===
 
@@ -620,7 +700,18 @@ try:
 
     for render_layer in render_layers_to_process:
         print(f"Setting render layer: {{render_layer}}")
-        cmds.editRenderLayerGlobals(currentRenderLayer=render_layer)
+        try:
+            _is_ref = False
+            try:
+                _is_ref = cmds.referenceQuery(render_layer, isNodeReferenced=True)
+            except Exception:
+                _is_ref = False
+            if not (render_layer == "defaultRenderLayer" and _is_ref):
+                cmds.editRenderLayerGlobals(currentRenderLayer=render_layer)
+            else:
+                print(f"[Layer] '{{render_layer}}' is referenced; skipping set-current; relying on -rl.")
+        except Exception as _e:
+            print(f"[Layer] Could not set currentRenderLayer='{{render_layer}}': {{_e}}")
         if render_layer == "defaultRenderLayer":
             filename_with_layer = filename
         else:
@@ -646,7 +737,7 @@ try:
             "-r", "hw2",
             "-s", "1", "-e", "1",
             "-x", "1920", "-y", str(int(pixel_height)),
-            "-cam", render_camera,
+            "-cam", render_cam_transform,
             "-rd", output_dir,
             "-of", "png",
             "-im", filename_with_layer,
@@ -656,9 +747,7 @@ try:
             temp_scene_path
         ]
 
-
         print("Executing Render.exe with command:")
-
         print(" ".join(render_cmd))
 
         # === RUN THE RENDERING PROCESS ===
@@ -753,7 +842,6 @@ try:
 
     # === WRITE EAGLE JSON FILE ===
 
-    #library_root = os.path.dirname(output_dir)
     base_library = os.path.join(os.path.splitdrive(output_dir)[0] + os.sep, "Perforce", "Potter", "Art", "EagleFiles")
     library_root = os.path.join(base_library, file_type.capitalize())
     json_filename = f"render_data_{{file_type.lower()}}.json"
@@ -800,12 +888,10 @@ try:
         asset_name = os.path.splitext(os.path.basename(original_scene))[0]
         num_shaders = len(connected_shaders)
         num_textures = sum(len(v) for v in shader_texture_data.values())
-        # simple missing-textures check (optional)
         missing_textures = any(
             (t.get('filePath') and not os.path.exists(t['filePath']))
             for texlist in shader_texture_data.values() for t in texlist
         )
-        # Perforce-style scene path
         scene_rel = original_scene.replace(os.sep, "/").split("/Perforce/", 1)[-1]
         p4_path = f"//{{scene_rel}}"
 
@@ -830,7 +916,15 @@ try:
         os.remove(temp_scene_path)
         print(f"Temporary scene deleted: {{temp_scene_path}}")
 
-    print(f"Render complete! Check directory: {output_dir}")
+    try:
+        if 'rehost_path' in locals() and os.path.exists(rehost_path):
+            os.remove(rehost_path)
+            print(f"[Rehost] Deleted temp rehost file: {{rehost_path}}")
+    except Exception as e:
+        print(f"[Rehost] Could not delete rehost file: {{e}}")
+
+    norm_outdir = output_dir.replace(os.sep, "/")
+    print("Render complete! Check directory: " + norm_outdir)
 
 except Exception as e:
     traceback.print_exc()
@@ -852,6 +946,7 @@ class MayaRenderGUI(QWidget):
         self.scene_files = []
         self.current_index = 0
         self.gdocs = GDocsHelper.GDocs()
+        self.deleted_status = {}
         self.initUI()
 
     def initUI(self):
@@ -863,6 +958,13 @@ class MayaRenderGUI(QWidget):
                 font-size: 11pt;
             }
             QLineEdit, QTextEdit {
+                background-color: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 5px;
+                padding: 4px;
+                color: #f0f0f0;
+            }
+            QPlainTextEdit {
                 background-color: #3a3a3a;
                 border: 1px solid #555;
                 border-radius: 5px;
@@ -925,9 +1027,18 @@ class MayaRenderGUI(QWidget):
         scene_layout.addWidget(self.scene_folder_browse)
         main_layout.addLayout(scene_layout)
 
-        self.overwrite_checkbox = QCheckBox("Re-Render Existing Entries")
-        self.overwrite_checkbox.setChecked(True)
-        main_layout.addWidget(self.overwrite_checkbox)
+        mode_row = QHBoxLayout()
+        mode_label = QLabel("Render Options:")
+        self.rerender_mode = QComboBox()
+        self.rerender_mode.addItems(["Render New Entries Only","Re-Render If New View","Re-Render Crashed Renders Only","Force Re-Render All"])
+        self.rerender_mode.setCurrentText("Render New Entries Only")
+        mode_row.addWidget(mode_label)
+        mode_row.addWidget(self.rerender_mode, 1)
+        main_layout.addLayout(mode_row)
+
+        self.rerender_deleted = QCheckBox("Re-Render Deleted Assets")
+        self.rerender_deleted.setChecked(False)
+        main_layout.addWidget(self.rerender_deleted)
 
         self.render_button = QPushButton("🚀 Render Scenes")
         self.render_button.clicked.connect(self.run_maya_render)
@@ -935,12 +1046,12 @@ class MayaRenderGUI(QWidget):
 
         checkbox_layout = QHBoxLayout()
         self.checkboxes = {
-            "Props": QCheckBox("Props"),
-            "Outfits": QCheckBox("Outfits"),
-            "Hair": QCheckBox("Hair"),
             "Characters": QCheckBox("Character"),
             "Creatures": QCheckBox("Creature"),
-            "Effects": QCheckBox("Effects")
+            "Effects": QCheckBox("Effects"),
+            "Hair": QCheckBox("Hair"),
+            "Outfits": QCheckBox("Outfits"),
+            "Props": QCheckBox("Props")
         }
         for category, checkbox in self.checkboxes.items():
             checkbox.clicked.connect(self.make_exclusive)
@@ -951,9 +1062,26 @@ class MayaRenderGUI(QWidget):
         self.upload_button.clicked.connect(self.upload_images_to_eagle)
         main_layout.addWidget(self.upload_button)
 
-        self.log_output = QTextEdit()
+        delete_row = QHBoxLayout()
+        self.delete_label = QLabel("Delete by Asset or Link:")
+        self.delete_input = QPlainTextEdit()
+        self.delete_input.setPlaceholderText("Enter asset name (e.g. p_MyProp_rig) or a .ma/.png link")
+        default_h = self.scene_folder_edit.sizeHint().height()
+        self.delete_input.setFixedHeight(default_h)
+        self.delete_input.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.delete_input.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.delete_input.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.delete_button = QPushButton("🗑️ Delete from Eagle + Sheets")
+        self.delete_button.clicked.connect(self.delete_assets)
+        delete_row.addWidget(self.delete_label)
+        delete_row.addWidget(self.delete_input, 1)
+        delete_row.addWidget(self.delete_button)
+        main_layout.addLayout(delete_row)
+
+        self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setFont(QFont("Courier", 10))
+        self.log_output.append = self.log_output.appendPlainText
         main_layout.addWidget(self.log_output)
 
         self.progress_bar = QProgressBar()
@@ -964,7 +1092,7 @@ class MayaRenderGUI(QWidget):
         self.setLayout(main_layout)
         self.setWindowTitle(" Maya To Eagle Renderer")
         self.setMinimumWidth(600)
-        self.setGeometry(300, 300, 640, 800)
+        self.setGeometry(300, 300, 800, 800)
 
     def make_exclusive(self):
         sender = self.sender()
@@ -1042,9 +1170,9 @@ class MayaRenderGUI(QWidget):
         
     def get_checked_views(self, scene_file, summary=None):
         """
-        Return a list of views (Front/Left/Back/Top) to use for this scene.
-        If new entry: defaults → FLB, props → FLT).
-        If existing entry: read from sheet checkboxes.
+        Return a list of views (Front/Left/Back/Top) to use for this scene
+        If new entry: defaults - FLB, props - FLT)
+        If existing entry: read from sheet checkboxes
         """
         output_dir = self.get_output_dir_for_file(scene_file) or ""
         sheet  = GDocsHelper._category_from_output_dir(output_dir)
@@ -1065,7 +1193,7 @@ class MayaRenderGUI(QWidget):
                 else:
                     return ["Front", "Left", "Back"]
             else:
-                # Existing entry → checkboxes from sheet
+                # Existing entry - checkboxes from sheet
                 row_dict = self.gdocs.to_dict(sheet, row)
                 checked = []
                 for key, label in (('front', 'Front'), ('left', 'Left'), ('back', 'Back'), ('top', 'Top')):
@@ -1176,34 +1304,61 @@ class MayaRenderGUI(QWidget):
                 sheet = GDocsHelper._category_from_output_dir(output_dir)
                 asset = os.path.splitext(os.path.basename(scene_file))[0]
                 row, _ = self.gdocs.getRow(sheet, asset)
-
+                key = os.path.splitext(os.path.basename(scene_file))[0].lower()
                 skip = False
                 skip_msg = None
+                mode = self.rerender_mode.currentText()
 
-                if row is not None:
-                    if not self.overwrite_checkbox.isChecked():
-                        # UNCHECKED: skip if an entry already exists
+                if row is None:
+                    self.deleted_status[key] = None
+                    if mode == "Re-Render Crashed Renders Only":
                         skip = True
-                        skip_msg = f"Entry already exists in sheet for: {base_filename}"
-                    else:
-                        # CHECKED: skip only if views match "Previously Rendered"
-                        row_dict = self.gdocs.to_dict(sheet, row)  # cleaned keys
-                        allowed = {"Front", "Left", "Back", "Top"}
-                        prev_raw = str(row_dict.get('previouslyrendered', '') or '')
-                        prev_set = {t.title() for t in re.split(r'[,\s/;]+', prev_raw) if t.strip()} & allowed
+                        skip_msg = f"No existing row (nothing crashed) for: {key}"
 
-                        TRUE_VALUES = {'true','yes','y','1','checked','on','☑','☒'}
-                        selected_set = {
-                            label for key, label in (('front','Front'), ('left','Left'), ('back','Back'), ('top','Top'))
-                            if str(row_dict.get(key)).strip().lower() in TRUE_VALUES
-                        } & allowed
-
-                        if prev_set == selected_set and prev_set:
+                if row is not None and not skip:
+                    row_dict = self.gdocs.to_dict(sheet, row)
+                    TRUE_VALUES = {'true','yes','y','1','checked','on','☑','☒'}
+                    deleted_raw = str(row_dict.get('deleted', '') or '').strip().lower()
+                    is_deleted = deleted_raw in TRUE_VALUES
+                    self.deleted_status[key] = is_deleted
+                    if is_deleted:
+                        if not self.rerender_deleted.isChecked():
                             skip = True
-                            skip_msg = (
-                                f"'Previously Rendered' matches selected views "
-                                f"({', '.join(sorted(selected_set))}) for: {base_filename}"
-                            )
+                            skip_msg = (f"Marked deleted in Sheets; enable 'Re-render deleted assets' "
+                                        f"to process: {base_filename}")
+                        else:
+                            self.log_output.append(f"[Override] 'Deleted' is true and override is ON; "
+                                                   f"forcing render for {base_filename}.")
+                            pass
+                    if not skip and not (is_deleted and self.rerender_deleted.isChecked()):
+                        if mode == "Render New Entries Only":
+                            skip = True
+                            skip_msg = (f"Entry already exists: {base_filename}")
+                        elif mode == "Re-Render Crashed Renders Only":
+                            crashed_raw = str(row_dict.get('crashed', '') or '').strip()
+                            crashed_norm = crashed_raw.lower()
+                            if crashed_norm and not crashed_norm.startswith('no'):
+                                skip = False
+                                self.log_output.append(f"Re-rendering existing entry due to crashed='{crashed_raw}'.")
+                            else:
+                                skip = True
+                                skip_msg = (f"Skipping non-crashed entry: {base_filename} "
+                                            f"(crashed='{crashed_raw or 'No'}')")
+                        elif mode == "Re-Render If New View":
+                            allowed = {"Front", "Left", "Back", "Top"}
+                            prev_raw = str(row_dict.get('previouslyrendered', '') or '')
+                            prev_set = {t.title() for t in re.split(r'[,\s/;]+', prev_raw) if t.strip()} & allowed
+                            selected_set = {
+                                label for key, label in (('front','Front'), ('left','Left'), ('back','Back'), ('top','Top'))
+                                if str(row_dict.get(key)).strip().lower() in TRUE_VALUES
+                            } & allowed
+                            if prev_set == selected_set and prev_set:
+                                skip = True
+                                skip_msg = ("'Previously Rendered' matches selected views "
+                                            f"({', '.join(sorted(selected_set))}) for: {base_filename}")
+                        elif mode == "Force Re-Render All":
+                            pass
+
                 if skip:
                     self.log_output.append(f"\n=== Skipping render. {skip_msg} ===\n")
                     self.current_index += 1
@@ -1224,9 +1379,7 @@ class MayaRenderGUI(QWidget):
 
             # Get checked camera angles
             views = self.get_checked_views(scene_file)
-            # For now, just print them to log (or pass to Maya script later)
             self.log_output.append(f"[EAGLE] Views for {os.path.basename(scene_file)}: {', '.join(views) if views else 'None'}")
-
             # Format the Maya script with the current scene file and its specific output directory
             formatted_script = MAYA_SCRIPT.format(
                 scene_file=scene_file,
@@ -1250,12 +1403,19 @@ class MayaRenderGUI(QWidget):
             self.log_output.append(MAYA_BIN + " " + " ".join(arguments))
             self.log_output.append("-----\n")
 
+            if self.process:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+                self.process.deleteLater()
+                self.process = None
             self.process = QProcess(self)
             self.process.setProcessChannelMode(QProcess.MergedChannels)
             # catch hard crashes and pipe/IO errors
             self.process.errorOccurred.connect(self.handle_process_error)
             self.process.readyReadStandardOutput.connect(self.handle_stdout)
-            self.process.readyReadStandardError.connect(self.handle_stderr)
+            #self.process.readyReadStandardError.connect(self.handle_stderr)
             self.process.finished.connect(
                 lambda exitCode, exitStatus: self.on_process_finished(exitCode, exitStatus, script_path, scene_file)
             )
@@ -1274,7 +1434,7 @@ class MayaRenderGUI(QWidget):
             self.record_failure(scene_file, "Maya crashed or pipe broke (errorOccurred).")
 
     def handle_stdout(self):
-        data = self.process.readAllStandardOutput().data().decode()
+        data = self.process.readAllStandardOutput().data().decode('utf-8', 'ignore')
         self.log_output.append(data)
 
     def handle_stderr(self):
@@ -1286,6 +1446,167 @@ class MayaRenderGUI(QWidget):
             return sys._MEIPASS
         else:
             return os.path.dirname(os.path.abspath(__file__))
+
+    def _basename_no_ext(self, path_or_name: str) -> str:
+        b = os.path.basename(path_or_name.strip())
+        return os.path.splitext(b)[0].strip().lower()
+
+    def _fetch_eagle_items(self):
+        try:
+            resp = requests.get(EAGLE_API_LIST, timeout=10)
+            resp.raise_for_status()
+            return resp.json().get("data", []) or []
+        except Exception as e:
+            self.log_output.append(f"[EAGLE] List error: {e}")
+            return []
+
+    def _trash_eagle_items(self, item_ids):
+        if not item_ids:
+            return False
+        try:
+            r = requests.post(EAGLE_API_MOVE_TO_TRASH, json={"itemIds": item_ids}, timeout=10)
+            if r.status_code == 200:
+                return True
+            self.log_output.append(f"[EAGLE] moveToTrash failed: {r.text}")
+        except Exception as e:
+            self.log_output.append(f"[EAGLE] moveToTrash error: {e}")
+        return False
+
+    def _extract_asset_from_annotation_malink(self, annotation_text: str):
+        """
+        From an Eagle annotation we created (contains 'malink: //Potter/.../Something.ma'),
+        return the scene asset name (basename without extension).
+        """
+        if not annotation_text:
+            return None
+        for line in str(annotation_text).splitlines():
+            if line.strip().lower().startswith("malink:"):
+                p = line.split(":", 1)[1].strip()
+                if p:
+                    try:
+                        base = os.path.basename(p)
+                        if base:
+                            return os.path.splitext(base)[0]
+                    except Exception:
+                        pass
+        return None
+    
+    def _parse_terms(self, raw_text: str):
+        parts = re.split(r'[,\n;]+', raw_text or '')
+        terms = [p.strip() for p in parts if p.strip()]
+        seen, out = set(), []
+        for t in terms:
+            key = t.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(t)
+        return out
+
+    def _match_eagle_for_term(self, eagle_items, term: str):
+        candidates = {self._basename_no_ext(term)}
+        matched_ids = []
+        inferred_assets = set()
+
+        # infer asset directly from input if possible
+        if term.lower().endswith(".ma"):
+            inferred_assets.add(os.path.splitext(os.path.basename(term))[0])
+        elif ("/" not in term and "\\" not in term and not term.lower().endswith(".png")):
+            inferred_assets.add(term.strip())
+
+        tl = term.lower()
+        for it in eagle_items:
+            eid  = it.get("id")
+            name = it.get("name", "")
+            note = it.get("annotation", "") or ""
+            n_noext = os.path.splitext(name)[0].lower()
+
+            name_hit = (n_noext in candidates)
+            anno_hit = (tl in name.lower()) or (tl in str(note).lower())
+            if name_hit or anno_hit:
+                if eid:
+                    matched_ids.append(eid)
+                asset_from_anno = self._extract_asset_from_annotation_malink(note)
+                if asset_from_anno:
+                    inferred_assets.add(asset_from_anno)
+
+        return matched_ids, inferred_assets
+    
+    def delete_assets(self):
+        """
+        Accept multiple assets/links (one per line or comma/semicolon-separated),
+        trash matching Eagle items, and delete matching rows in Google Sheets.
+        """
+        raw = (self.delete_input.toPlainText() or "").strip()
+        if not raw:
+            self.log_output.append("Enter assets or links first.")
+            return
+        
+        confirm_text = (
+            "You are about to delete assets from both Eagle and Google Sheets.\n\n"
+            "Please confirm Eagle UI is focused on the correct library before deleting.\n\n"
+            "This action will:\n"
+            "- Move matching Eagle items to the Trash\n"
+            "- Mark rows as deleted in Google Sheets\n\n"
+            "Are you sure you want to continue?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            confirm_text,
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            self.log_output.append("Delete canceled by user.\n")
+            return
+
+        terms = self._parse_terms(raw)
+        self.log_output.append(f"🧹 Deleting {len(terms)} item(s) from Eagle & Sheets...")
+
+        eagle_items = self._fetch_eagle_items()
+        if not eagle_items:
+            self.log_output.append("[EAGLE] No items returned from Eagle.")
+            return
+
+        all_ids = []
+        all_sheet_assets = set()
+
+        for t in terms:
+            ids, assets = self._match_eagle_for_term(eagle_items, t)
+            if ids:
+                self.log_output.append(f" • Eagle match for '{t}': {len(ids)} item(s)")
+            else:
+                self.log_output.append(f" • No Eagle match for '{t}'")
+            all_ids.extend(ids)
+            all_sheet_assets |= assets
+
+        unique_ids = list({i for i in all_ids if i})
+        if unique_ids:
+            ok = self._trash_eagle_items(unique_ids)
+            if ok:
+                self.log_output.append(f"🗑️ Moved {len(unique_ids)} Eagle item(s) to Trash.")
+            else:
+                self.log_output.append("Eagle trash request failed.")
+        else:
+            self.log_output.append("No Eagle items to trash.")
+
+        if not all_sheet_assets:
+            self.log_output.append("No Sheets rows inferred. Tip: include .ma paths or asset names (e.g., p_MyProp_rig).")
+            return
+
+        deleted_any = False
+        for asset in sorted(all_sheet_assets):
+            try:
+                sheetName, rowNum = self.gdocs.mark_asset_deleted(asset)
+                if sheetName and rowNum:
+                    self.log_output.append(f"✅ Deleted '{asset}' from Google Sheets tab '{sheetName}' (row {rowNum}).")
+                    deleted_any = True
+                else:
+                    self.log_output.append(f"[Sheets] Row not found for asset '{asset}'.")
+            except Exception as e:
+                self.log_output.append(f"[Sheets] Delete failed for '{asset}': {e}")
+
+        if not deleted_any:
+            self.log_output.append("No rows were marked for delete.")
 
     def upload_images_to_eagle(self):
         self.log_output.append("\n--- Uploading Images to Eagle ---\n")
@@ -1333,8 +1654,8 @@ class MayaRenderGUI(QWidget):
             confirm_text = (
                 f"You are about to upload all rendered {category} assets to the {category} Eagle library.\n\n"
                 f"Please confirm Eagle UI is focused on the {category} library before uploading.\n\n"
-                f"→ JSON Data: {json_filename}\n"
-                f"→ Target Eagle Folder: '{category}'\n\n"
+                f"- JSON Data: {json_filename}\n"
+                f"- Target Eagle Folder: '{category}'\n\n"
                 "Continue?"
             )
 
@@ -1368,24 +1689,39 @@ class MayaRenderGUI(QWidget):
                 self.log_output.append(e.stderr)
 
     def on_process_finished(self, exitCode, exitStatus, script_path, scene_file):
-        # log to UI
+
         self.log_output.append(f"\nProcess finished for {scene_file} with exit code: {exitCode}")
 
         if exitStatus == QProcess.CrashExit:
             self.record_failure(scene_file, "QProcess reported CrashExit.")
         
         # if it failed, write to failures log
-        CRASH_CODES = {3221225477, 3221225785} 
+        CRASH_CODES = {3221225477, 3221225785}
+        LAYER_EXIT_CODES = {211}
+        UNKNOWN_DATA_CODES = {1}
         crashed = 'No'
         if exitCode == 0:
             self.log_output.append(f"✔️ Process succeeded: {scene_file}")
             crashed = 'No'
+        elif exitCode in LAYER_EXIT_CODES:
+            self.record_failure(scene_file, "EXIT 211 BAD DEFAULT LAYER")
+            crashed = 'Yes, Exit 211 bad default layer'
+        elif exitCode in UNKNOWN_DATA_CODES:
+            self.record_failure(scene_file, "EXIT 1 FILE CONTAINS UNKNOWN DATA")
+            crashed = 'Yes, Exit 1 Bad Data'
         elif exitCode in CRASH_CODES or exitCode < 0:
             self.record_failure(scene_file, "LARGE TEXTURE CRASH")
             crashed = 'Yes, Large Texture Crash'
         else:
-            self.record_failure(scene_file, "PLUGIN OR OTHER ERROR")
+            self.record_failure(scene_file, f"PLUGIN OR OTHER ERROR (exit {exitCode})")
             crashed = 'Yes, plugin or other error'
+
+        if self.process:
+            try:
+                self.process.deleteLater()
+            except Exception:
+                pass
+            self.process = None
 
         # clean up the temp script
         if os.path.exists(script_path):
@@ -1412,7 +1748,6 @@ class MayaRenderGUI(QWidget):
 
             views_for_sheet = self.get_checked_views(scene_file)
             checkbox_payload = self.views_to_checkbox_payload(views_for_sheet)
-
             payload = {'asset': asset, 'path': p4}
             payload.update(checkbox_payload)
             if summary:
@@ -1424,13 +1759,15 @@ class MayaRenderGUI(QWidget):
                     'missingtextures':  'Yes' if summary.get('missing_textures') else 'No',
                 })
             payload['crashed'] = crashed
+            order = [('front', 'Front'), ('left', 'Left'), ('back', 'Back'), ('top', 'Top')]
+            previously_rendered = ", ".join(label for key, label in order if bool(payload.get(key)))
+            payload['Previously Rendered'] = previously_rendered
 
-            # Only fill 'Previously Rendered' if this is not a new entry.
-            existing_row, _ = self.gdocs.getRow(sheet, asset)
-            if existing_row is not None:
-                order = [('front', 'Front'), ('left', 'Left'), ('back', 'Back'), ('top', 'Top')]
-                previously_rendered = ", ".join(label for key, label in order if bool(payload.get(key)))
-                payload['Previously Rendered'] = previously_rendered
+            asset_key = os.path.splitext(os.path.basename(scene_file))[0].lower()
+            status = self.deleted_status.pop(asset_key, None)
+            if status is None or (status is True and self.rerender_deleted.isChecked()):
+                payload['deleted'] = False
+                payload['Deleted'] = False
 
             self.gdocs.doUpdateConfig(sheet, payload)
 
