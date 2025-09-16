@@ -1,15 +1,12 @@
-# GDocsHelperEagle.py  (leaned)
+# GDocsHelperEagle.py
 
 import os
-import json
 import datetime
 import getpass
 import logging
 
 logger = logging.getLogger(__name__)
 
-# If you don't need impersonation, replace with your service-account only,
-# or share the sheet to the SA and remove "subject=" in _get_service().
 _subjects = [
     'automation@tinyco.com',
     'automation1@tinyco.com',
@@ -95,7 +92,6 @@ class GDocs(object):
 
     @staticmethod
     def cleaned_heading(value):
-        # keep only alnum, lowercased
         return ''.join(ch for ch in str(value) if ch.isalnum()).lower()
 
     def getSheetInfo(self, sheetId):
@@ -134,24 +130,18 @@ class GDocs(object):
         heads, _ = self.headings_and_row_index(sheetId)
         if "asset" in heads:
             return heads.index("asset"), "asset"
-        if "name" in heads:
-            return heads.index("name"), "name"
-        raise RuntimeError(f"Sheet '{sheetId}' must have an 'Asset' or 'Name' column.")
+        raise RuntimeError(f"Sheet '{sheetId}' must have an 'Asset' column.")
 
     def getRow(self, sheetId, rowId):
         heads, header_idx = self.headings_and_row_index(sheetId)
-        # Use 'asset' if present, else 'name'
         if "asset" in heads:
             key_idx = heads.index("asset")
-        elif "name" in heads:
-            key_idx = heads.index("name")
         else:
-            raise RuntimeError(f"Sheet '{sheetId}' must have an 'Asset' or 'Name' column.")
+            raise RuntimeError(f"Sheet '{sheetId}' must have an 'Asset' column.")
 
         feed = self.getFeed(sheetId)
         # Search only data rows (after header)
         search_rows = feed[header_idx + 1:]
-
         found = None
         found_abs_idx = -1
         for i, row in enumerate(search_rows):
@@ -160,7 +150,6 @@ class GDocs(object):
                 found_abs_idx = header_idx + 1 + i
                 break
 
-        # row_number is 1-based for Sheets API
         return [found, (found_abs_idx + 1) if found is not None else -1]
     
     def headings_and_row_index(self, sheet_id):
@@ -178,8 +167,6 @@ class GDocs(object):
             if "asset" in heads or "name" in heads:
                 self._header_cache[sheet_id] = (heads, idx)
                 return heads, idx
-
-        # Fallback: first non-empty row (or empty)
         if feed:
             heads = [self.cleaned_heading(c) for c in feed[0]]
         else:
@@ -208,12 +195,9 @@ class GDocs(object):
         # fields that we always ignore when comparing
         volatile = {'date', 'dateandtime', 'blame'}
         row_dict = self.to_dict(sheetId, row)
-        # Remove volatile keys from the row snapshot
         for k in volatile:
             row_dict.pop(k, None)
-        # Remove volatile keys from the new payload too
         cmp_data = {k: v for k, v in data.items() if k not in volatile}
-        # Keep only meaningful values
         row_set  = {k: v for k, v in row_dict.items() if self._is_value_valid(v)}
         data_set = {k: v for k, v in cmp_data.items() if self._is_value_valid(v)}
         # Update only if any meaningful key actually changed
@@ -241,7 +225,6 @@ class GDocs(object):
         self.feeds.pop(_normalize_sheet_id(sheetId), None)
 
     def doUpdateConfig(self, sheetId, data):
-        # Normalize keys to cleaned headings style
         data = {self.cleaned_heading(k): v for k, v in data.items()}
         key_idx, key_name = self._key_index(sheetId)
         key_val = data.get(key_name)
@@ -250,7 +233,6 @@ class GDocs(object):
 
         try:
             row, row_num = self.getRow(sheetId, key_val)
-            # Always stamp date/blame
             data['dateandtime'] = datetime.datetime.now().strftime("%I:%M%p on %m/%d/%Y")
             data['blame'] = getpass.getuser()
 
@@ -264,12 +246,65 @@ class GDocs(object):
                 out_row = self.flatten_for_values(sheetId, merged)
                 self.updateRow(out_row, row_num, sheetId)
         except Exception as e:
-            # If googleapiclient is present, surface the HTTP status cleanly, else just log
             if hasattr(self, 'gerrors') and isinstance(e, self.gerrors.HttpError):
                 logger.error(f"Sheets HttpError {e.resp.status}: {e}")
             else:
                 logger.error(f"Sheets update error: {e}")
             raise
+
+    def _delete_row_number(self, sheetId, row_number_1_based):
+        """Physically delete a row from the sheet."""
+        s_id, tab = self.getSheetInfo(sheetId)
+        # Convert to 0-based indices for batchUpdate
+        start_index = row_number_1_based - 1
+        end_index = start_index + 1
+        body = {
+            "requests": [{
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": None,  # Use by title below
+                        "dimension": "ROWS",
+                        "startIndex": start_index,
+                        "endIndex": end_index
+                    }
+                }
+            }]
+        }
+        # Resolve the sheetId by title
+        ss = self.service.spreadsheets().get(spreadsheetId=s_id).execute()
+        gid = None
+        for sht in ss.get("sheets", []):
+            props = sht.get("properties", {})
+            if props.get("title") == tab:
+                gid = props.get("sheetId")
+                break
+        if gid is None:
+            raise RuntimeError(f"Could not resolve gid for tab '{tab}'")
+
+        body["requests"][0]["deleteDimension"]["range"]["sheetId"] = gid
+        self.service.spreadsheets().batchUpdate(
+            spreadsheetId=s_id, body=body
+        ).execute()
+        self.feeds.pop(_normalize_sheet_id(sheetId), None)
+
+    def mark_asset_deleted(self, asset):
+        """
+        Mark an asset as deleted by setting its 'Deleted' column to 'true'
+        instead of removing the row.
+        """
+        for sheetName in ("Props", "Characters", "Creatures", "Outfits", "Hair", "Effects"):
+            try:
+                row, row_num = self.getRow(sheetName, asset)
+                if row is not None and row_num > 0:
+                    # Merge row into dict so we can preserve existing values
+                    merged = self.to_dict(sheetName, row)
+                    merged["deleted"] = "true"   # <-- lowercase heading form
+                    out_row = self.flatten_for_values(sheetName, merged)
+                    self.updateRow(out_row, row_num, sheetName)
+                    return sheetName, row_num
+            except Exception as e:
+                continue
+        return None, None
 
     # --- Public entry points you call from the GUI ---
 
