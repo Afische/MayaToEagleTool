@@ -10,12 +10,12 @@ EAGLE_API_FOCUS = "http://localhost:41595/api/folder/open"
 
 # --- Folder IDs within the shared Eagle library ---
 FOLDER_IDS = {
-    "creatures": "M9D7XXUNN2QHU",
-    "hair": "M9D81F597PZ6N",
-    "outfits": "M9D81SQAQOYBH",
-    "characters": "M9D829A2UE0Y8",
-    "props": "M9D82KZ6ELR64",
-    "effects": "M9D82UNUFSGQA"
+    "creatures": "MBJHC3VQ08YRP",
+    "hair": "MBJHBVWAEPQ06",
+    "outfits": "MBJHCDMM17MIA",
+    "characters": "MBJHAHCJI5T3K",
+    "props": "MBJHBP8IOSVK4",
+    "effects": "MBJHBZWEM2A4O"
 }
 
 # --- Dynamically load JSON File Path from environment variable ---
