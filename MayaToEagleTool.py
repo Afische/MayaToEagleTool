@@ -1446,10 +1446,14 @@ class MayaRenderGUI(QWidget):
             return sys._MEIPASS
         else:
             return os.path.dirname(os.path.abspath(__file__))
+        
+    def _normalize_token(self, s: str) -> str:
+        s = (s or "").lower()
+        return re.sub(r'[^0-9a-z]+', '', s)
 
-    def _basename_no_ext(self, path_or_name: str) -> str:
-        b = os.path.basename(path_or_name.strip())
-        return os.path.splitext(b)[0].strip().lower()
+    def _basename_no_ext(self, s: str) -> str:
+        b = os.path.basename((s or "").strip())
+        return os.path.splitext(b)[0].strip()
 
     def _fetch_eagle_items(self):
         try:
@@ -1503,34 +1507,116 @@ class MayaRenderGUI(QWidget):
         return out
 
     def _match_eagle_for_term(self, eagle_items, term: str):
-        candidates = {self._basename_no_ext(term)}
-        matched_ids = []
-        inferred_assets = set()
+        term_l = (term or "").strip()
+        term_base  = self._basename_no_ext(term_l)         # "butterbeerPour"
+        term_norm  = self._to_eagle_basename(term_l)       # "butterbeerpour"
+        term_sheet = self._to_sheet_asset_name(term_l)     # "fx_butterbeerPour_rig"
+        term_tokens = { self._normalize_token(x) for x in (term_base, term_norm, term_sheet) if x }
 
-        # infer asset directly from input if possible
-        if term.lower().endswith(".ma"):
-            inferred_assets.add(os.path.splitext(os.path.basename(term))[0])
-        elif ("/" not in term and "\\" not in term and not term.lower().endswith(".png")):
-            inferred_assets.add(term.strip())
+        inferred_assets_from_input = set()
+        if term_l.lower().endswith(".ma"):
+            inferred_assets_from_input.add(os.path.splitext(os.path.basename(term_l))[0])
 
-        tl = term.lower()
-        for it in eagle_items:
-            eid  = it.get("id")
-            name = it.get("name", "")
-            note = it.get("annotation", "") or ""
-            n_noext = os.path.splitext(name)[0].lower()
+        def _scan(items):
+            matched_ids = []
+            inferred_assets = set()
 
-            name_hit = (n_noext in candidates)
-            anno_hit = (tl in name.lower()) or (tl in str(note).lower())
-            if name_hit or anno_hit:
-                if eid:
+            for it in items:
+                eid  = it.get("id")
+                if not eid:
+                    continue
+
+                name = (it.get("name") or "").strip()
+                note = (it.get("annotation") or "")
+
+                n_noext = os.path.splitext(name)[0].lower()
+                n_norm  = self._to_eagle_basename(name)
+                item_tokens = { self._normalize_token(n_noext), self._normalize_token(n_norm) }
+
+                name_hit = bool(item_tokens & term_tokens)
+
+                anno_hit = False
+                anno_asset = self._extract_asset_from_annotation_malink(note)
+                if anno_asset:
+                    anno_token = self._normalize_token(anno_asset)
+                    anno_hit = anno_token in term_tokens
+
+                if name_hit or anno_hit:
                     matched_ids.append(eid)
-                asset_from_anno = self._extract_asset_from_annotation_malink(note)
-                if asset_from_anno:
-                    inferred_assets.add(asset_from_anno)
+                    if anno_asset and anno_token in term_tokens:
+                        inferred_assets.add(anno_asset)
 
-        return matched_ids, inferred_assets
+            return matched_ids, inferred_assets
+
+        ids, assets = _scan(eagle_items)
+
+        if not ids:
+            tried = set()
+            for qname in { self._to_eagle_basename(term_l), self._basename_no_ext(term_l) }:
+                qname = (qname or "").strip().lower()
+                if not qname or qname in tried:
+                    continue
+                tried.add(qname)
+
+                for query_params in ({"name": qname, "ext": "png"}, {"name": qname}):
+                    found = self._paged_list(query_params)
+                    if found:
+                        f_ids, f_assets = _scan(found)
+                        ids.extend(f_ids)
+                        assets |= f_assets
+                        if ids:
+                            break
+                if ids:
+                    break
+
+        assets |= inferred_assets_from_input
+
+        if not assets:
+            name = term_l
+            if name and (name.lower().endswith(".png") or ("/" not in name and "\\" not in name)):
+                assets.add(self._to_sheet_asset_name(name))
+
+        return ids, assets
+
+    def _to_eagle_basename(self, s: str) -> str:
+        name = self._basename_no_ext(s)
+        name = re.sub(r'^(?:c_|o_|p_|fx_)', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'_rig$', '', name, flags=re.IGNORECASE)
+        return name.lower()
+
+    def _basename_no_ext_case(self, s: str) -> str:
+        b = os.path.basename((s or "").strip())
+        return os.path.splitext(b)[0].strip()
+
+    def _to_sheet_asset_name(self, s: str) -> str:
+        name_case = self._basename_no_ext_case(s)
+        if re.match(r'^(?:c_|o_|p_|fx_)', name_case, flags=re.IGNORECASE) or re.search(r'_rig$', name_case, flags=re.IGNORECASE):
+            return name_case
+        return f"fx_{name_case}_rig".lower()
     
+    def _paged_list(self, params):
+        """Yield items from /api/item/list across all Eagle pages"""
+        try:
+            all_found = []
+            offset = 0
+            while True:
+                q = params.copy()
+                q.setdefault("limit", 200)
+                q["offset"] = offset
+                r = requests.get(EAGLE_API_LIST, params=q, timeout=15)
+                r.raise_for_status()
+                data = (r.json() or {}).get("data", []) or []
+                if not data:
+                    break
+                all_found.extend(data)
+                if len(data) < q["limit"]:
+                    break
+                offset += q["limit"]
+            return all_found
+        except Exception as e:
+            self.log_output.append(f"[EAGLE] paged list error: {e}")
+            return []
+
     def delete_assets(self):
         """
         Accept multiple assets/links (one per line or comma/semicolon-separated),
@@ -1596,17 +1682,32 @@ class MayaRenderGUI(QWidget):
         deleted_any = False
         for asset in sorted(all_sheet_assets):
             try:
-                sheetName, rowNum = self.gdocs.mark_asset_deleted(asset)
-                if sheetName and rowNum:
-                    self.log_output.append(f"✅ Deleted '{asset}' from Google Sheets tab '{sheetName}' (row {rowNum}).")
-                    deleted_any = True
-                else:
-                    self.log_output.append(f"[Sheets] Row not found for asset '{asset}'.")
+                candidates = []
+                candidates.append(asset)
+                candidates.append(self._to_sheet_asset_name(asset))
+                base = self._to_eagle_basename(asset)
+                for pre in ('c_', 'o_', 'p_', 'fx_'):
+                    candidates.append(f"{pre}{base}_rig")
+                candidates += [c.lower() for c in list(dict.fromkeys(candidates))]
+                seen = set()
+                candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+                matched = None
+                for cand in candidates:
+                    sheetName, rowNum = self.gdocs.mark_asset_deleted(cand)
+                    if sheetName and rowNum:
+                        self.log_output.append(
+                            f"✅ Deleted '{cand}' from Google Sheets tab '{sheetName}' (row {rowNum})."
+                        )
+                        deleted_any = True
+                        matched = True
+                        break
+                if not matched:
+                    self.log_output.append(f"[Sheets] Row not found for asset '{asset}'. Tried: {', '.join(candidates[:6])}{'...' if len(candidates) > 6 else ''}")
             except Exception as e:
                 self.log_output.append(f"[Sheets] Delete failed for '{asset}': {e}")
-
         if not deleted_any:
             self.log_output.append("No rows were marked for delete.")
+
 
     def upload_images_to_eagle(self):
         self.log_output.append("\n--- Uploading Images to Eagle ---\n")
